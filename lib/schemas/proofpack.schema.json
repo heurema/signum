@@ -4,7 +4,7 @@
   "required": ["schemaVersion", "runId", "decision", "contract", "diff", "checks", "checksums", "summary"],
   "properties": {
     "schemaVersion": { "type": "string", "const": "2.0" },
-    "runId": { "type": "string", "pattern": "^sigil-" },
+    "runId": { "type": "string", "pattern": "^signum-" },
     "decision": { "type": "string", "enum": ["AUTO_OK", "AUTO_BLOCK", "HUMAN_REVIEW"] },
     "contract": { "type": "string" },
     "diff": { "type": "string" },

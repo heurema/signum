@@ -1,19 +1,19 @@
-# Sigil Reference
+# Signum Reference
 
 ## Usage
 
 ```
-/sigil <task description>
+/signum <task description>
 ```
 
-Sigil parses the task description and runs the full 4-phase pipeline automatically.
+Signum parses the task description and runs the full 4-phase pipeline automatically.
 
 ## Examples
 
 ### Simple feature (low risk)
 
 ```
-/sigil add a health check endpoint that returns 200 OK
+/signum add a health check endpoint that returns 200 OK
 ```
 
 Pipeline: contractor → engineer (1 attempt) → mechanic + Claude review → proofpack.
@@ -22,7 +22,7 @@ Estimated cost: ~$0.10-0.20.
 ### Authentication (medium risk)
 
 ```
-/sigil add user authentication with JWT tokens
+/signum add user authentication with JWT tokens
 ```
 
 Pipeline: contractor → engineer (up to 3 repair attempts) → mechanic + Claude + Codex + Gemini → synthesizer → proofpack.
@@ -31,7 +31,7 @@ Estimated cost: ~$0.30-0.60.
 ### Database migration (high risk)
 
 ```
-/sigil migrate user table from MongoDB to PostgreSQL
+/signum migrate user table from MongoDB to PostgreSQL
 ```
 
 Pipeline: same as medium but contractor flags high risk with risk signals. All 3 model reviews weighted equally in synthesis.
@@ -41,13 +41,13 @@ Estimated cost: ~$0.50-1.00.
 
 ```
 # Start a pipeline
-/sigil refactor the payment module
+/signum refactor the payment module
 
 # ...interrupt (Ctrl+C or close session)...
 
 # Reopen and run the same command
-/sigil refactor the payment module
-# Sigil detects .sigil/contract.json and asks: resume from Phase 2, or restart?
+/signum refactor the payment module
+# Signum detects .signum/contract.json and asks: resume from Phase 2, or restart?
 ```
 
 ## Pipeline Phases
@@ -58,7 +58,7 @@ CONTRACT → EXECUTE → AUDIT → PACK
 
 ### Phase 1: CONTRACT
 
-Contractor agent (haiku) scans the codebase and produces `.sigil/contract.json` — a structured specification with goal, scope, acceptance criteria, and risk assessment.
+Contractor agent (haiku) scans the codebase and produces `.signum/contract.json` — a structured specification with goal, scope, acceptance criteria, and risk assessment.
 
 Hard stop if `openQuestions` is non-empty — the user must answer before proceeding.
 
@@ -66,7 +66,7 @@ Hard stop if `openQuestions` is non-empty — the user must answer before procee
 
 Engineer agent (sonnet) implements the contract. Repair loop: up to 3 attempts of implement → check acceptance criteria → fix failures.
 
-Outputs: `.sigil/combined.patch`, `.sigil/execute_log.json`.
+Outputs: `.signum/combined.patch`, `.signum/execute_log.json`.
 
 ### Phase 3: AUDIT
 
@@ -83,11 +83,11 @@ Synthesizer agent applies deterministic rules:
 
 ### Phase 4: PACK
 
-Assembles `.sigil/proofpack.json` — machine-readable evidence bundle with SHA-256 checksums for every artifact.
+Assembles `.signum/proofpack.json` — machine-readable evidence bundle with SHA-256 checksums for every artifact.
 
 ## Artifacts
 
-All artifacts are stored in `.sigil/` (auto-added to `.gitignore`):
+All artifacts are stored in `.signum/` (auto-added to `.gitignore`):
 
 | File | Phase | Contents |
 |------|-------|----------|
@@ -119,7 +119,7 @@ All artifacts are stored in `.sigil/` (auto-added to `.gitignore`):
 | Field | Type | Description |
 |-------|------|-------------|
 | `schemaVersion` | `"2.0"` | Always "2.0" |
-| `runId` | string | `sigil-YYYY-MM-DD-XXXXXX` |
+| `runId` | string | `signum-YYYY-MM-DD-XXXXXX` |
 | `decision` | `AUTO_OK\|AUTO_BLOCK\|HUMAN_REVIEW` | Final verdict |
 | `checksums` | object | SHA-256 of each artifact |
 | `summary` | string | One-line human-readable summary |
@@ -172,20 +172,20 @@ codex: auth expired → run: codex auth
 gemini: auth expired → run: gemini login
 ```
 
-Sigil continues without the provider if auth fails.
+Signum continues without the provider if auth fails.
 
 ### Provider timeout
 
-External providers are killed after 180 seconds. The review continues with remaining providers. Check `.sigil/reviews/` for provider status.
+External providers are killed after 180 seconds. The review continues with remaining providers. Check `.signum/reviews/` for provider status.
 
-### `.sigil/` exists from previous run
+### `.signum/` exists from previous run
 
-Normal behavior. Sigil detects existing `contract.json` and offers:
+Normal behavior. Signum detects existing `contract.json` and offers:
 - **Resume**: continue from Phase 2
 - **Restart**: clear artifacts, start fresh
 
 ### Plugin not loading
 
-1. Verify installation: `claude plugin list | grep sigil`
-2. Reinstall: `claude plugin install sigil@emporium`
+1. Verify installation: `claude plugin list | grep signum`
+2. Reinstall: `claude plugin install signum@emporium`
 3. Open a new Claude Code session (plugins load at session start)

@@ -1,13 +1,13 @@
-# Sigil
+# Signum
 
 > Evidence-driven development pipeline with multi-model code review
 
-Sigil is a Claude Code plugin that turns a task description into a complete development cycle: contract generation, implementation with repair loop, and parallel audit by independent AI models. One command, four phases, verifiable output.
+Signum is a Claude Code plugin that turns a task description into a complete development cycle: contract generation, implementation with repair loop, and parallel audit by independent AI models. One command, four phases, verifiable output.
 
 Contract-first, multi-model-verified, proof-packaged.
 
 ```
-/sigil "add JWT authentication to the API"
+/signum "add JWT authentication to the API"
 ```
 
 ## Quick Start
@@ -15,16 +15,16 @@ Contract-first, multi-model-verified, proof-packaged.
 <!-- INSTALL:START — auto-synced from emporium/INSTALL_REFERENCE.md -->
 ```bash
 claude plugin marketplace add heurema/emporium
-claude plugin install sigil@emporium
+claude plugin install signum@emporium
 ```
 <!-- INSTALL:END -->
 
 ```bash
 # Run — describe what you want to build
-/sigil "your task description"
+/signum "your task description"
 ```
 
-Sigil generates a contract, shows it for approval, implements the code with an automatic repair loop, audits the result with multiple independent AI models, and produces a `proofpack.json` artifact.
+Signum generates a contract, shows it for approval, implements the code with an automatic repair loop, audits the result with multiple independent AI models, and produces a `proofpack.json` artifact.
 
 ## Architecture
 
@@ -51,7 +51,7 @@ CONTRACT → EXECUTE → AUDIT → PACK
 - **Contract-driven**: Every run starts with a structured `contract.json` defining acceptance criteria, affected files, and test strategy. Implementation is measured against it.
 - **Proofpack output**: `proofpack.json` is a CI-gate artifact — it records the contract, all audit findings, verdict, execution log, and provider availability in a single verifiable file.
 - **Repair loop**: The engineer agent retries failing tests up to 3 times before halting, reducing noise from transient build issues.
-- **CLI adapter for external models**: Codex and Gemini are invoked via their CLIs with explicit user consent. Sigil degrades gracefully if either is unavailable or unauthenticated.
+- **CLI adapter for external models**: Codex and Gemini are invoked via their CLIs with explicit user consent. Signum degrades gracefully if either is unavailable or unauthenticated.
 - **Finding validation**: Every AI finding is validated against the actual diff — file existence, line range bounds, evidence grep, scope check. Hallucinated findings are dropped before synthesis.
 
 ## Privacy & Data
@@ -71,12 +71,12 @@ All orchestration runs inside Claude Code. External providers (Codex CLI, Gemini
 
 ## Links
 
-- [skill7.dev/development/sigil](https://skill7.dev/development/sigil)
-- [Report Issue](https://github.com/heurema/sigil/issues)
+- [skill7.dev/development/signum](https://skill7.dev/development/signum)
+- [Report Issue](https://github.com/heurema/signum/issues)
 
 ## Version
 
-2.0.0
+2.0.1
 
 ## License
 

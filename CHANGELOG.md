@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.0.1] - 2026-03-02
+
+### Changed
+- Rename plugin: sigil → signum (lat. signum — "sign, seal")
+
 ## [2.0.0] - 2026-03-02
 
 ### Changed

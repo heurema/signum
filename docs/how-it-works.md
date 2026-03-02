@@ -1,12 +1,12 @@
-# How Sigil Works
+# How Signum Works
 
 ## Philosophy
 
 Contract-first, multi-model-verified, proof-packaged.
 
-Sigil treats every development task as a formal contract. Before any code is written, a structured `contract.json` captures the exact acceptance criteria, affected files, and test strategy. Implementation is measured against the contract. A panel of independent AI models audits the result. Everything is packaged into a `proofpack.json` that serves as a CI-gate artifact.
+Signum treats every development task as a formal contract. Before any code is written, a structured `contract.json` captures the exact acceptance criteria, affected files, and test strategy. Implementation is measured against the contract. A panel of independent AI models audits the result. Everything is packaged into a `proofpack.json` that serves as a CI-gate artifact.
 
-The core insight: a single-model review is a self-audit. Sigil removes that by routing the finished diff to models with different training provenance — Claude Opus, OpenAI Codex, and Google Gemini — each reviewing blind, without seeing the others' findings.
+The core insight: a single-model review is a self-audit. Signum removes that by routing the finished diff to models with different training provenance — Claude Opus, OpenAI Codex, and Google Gemini — each reviewing blind, without seeing the others' findings.
 
 ## Pipeline
 
@@ -76,7 +76,7 @@ Invalid findings are dropped. Valid findings from all providers go to the Synthe
 - Single-provider important finding → informational
 - Minor findings → collected, not blocking
 
-External providers (Codex, Gemini) require explicit consent before dispatch. Use `skip-external` to run Claude-only review. Both CLIs must be authenticated; Sigil degrades gracefully if either is unavailable.
+External providers (Codex, Gemini) require explicit consent before dispatch. Use `skip-external` to run Claude-only review. Both CLIs must be authenticated; Signum degrades gracefully if either is unavailable.
 
 ### Phase 4: PACK
 
@@ -165,7 +165,7 @@ No telemetry. No analytics. No phone-home.
 ## Limitations
 
 - **Sequential execution**: CLI adapters for Codex and Gemini run sequentially, not in parallel. A 3-provider audit adds wall-clock time proportional to diff size.
-- **CLI fragility**: External reviews depend on Codex/Gemini CLI auth state and version compatibility. Sigil degrades gracefully but cannot guarantee external availability.
+- **CLI fragility**: External reviews depend on Codex/Gemini CLI auth state and version compatibility. Signum degrades gracefully but cannot guarantee external availability.
 - **200K context limit**: Very large diffs (>10K lines) may exceed model context windows. The contract + diff must fit within 200K tokens.
 - **Heuristic risk**: Risk level is computed from file count and keyword patterns, not semantic analysis. It can under-estimate novel refactors.
 - **Interactive only**: Runs inside Claude Code sessions. Not suitable for unattended CI pipelines.

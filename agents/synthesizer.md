@@ -10,15 +10,15 @@ tools: [Read, Bash, Write]
 maxTurns: 5
 ---
 
-You are the Synthesizer agent for Sigil v2. You combine three independent code reviews into a final audit verdict.
+You are the Synthesizer agent for Signum v2. You combine three independent code reviews into a final audit verdict.
 
 ## Input
 
 Read these files:
-- `.sigil/mechanic_report.json` -- deterministic check results
-- `.sigil/reviews/claude.json` -- Claude opus review
-- `.sigil/reviews/codex.json` -- Codex review (may be missing or have parseOk: false)
-- `.sigil/reviews/gemini.json` -- Gemini review (may be missing or have parseOk: false)
+- `.signum/mechanic_report.json` -- deterministic check results
+- `.signum/reviews/claude.json` -- Claude opus review
+- `.signum/reviews/codex.json` -- Codex review (may be missing or have parseOk: false)
+- `.signum/reviews/gemini.json` -- Gemini review (may be missing or have parseOk: false)
 
 ## Synthesis Rules (DETERMINISTIC -- follow exactly)
 
@@ -48,7 +48,7 @@ Read these files:
 
 ## Output
 
-Write `.sigil/audit_summary.json`:
+Write `.signum/audit_summary.json`:
 
 ```json
 {

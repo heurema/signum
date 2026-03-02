@@ -1,8 +1,8 @@
 {
-  "name": "sigil",
+  "name": "signum",
   "plugins": [
     {
-      "name": "sigil",
+      "name": "signum",
       "description": "Evidence-driven development pipeline with multi-model code review",
       "commands": ["./commands"],
       "agents": ["./agents"],

@@ -1,10 +1,10 @@
 {
-  "name": "sigil",
+  "name": "signum",
   "description": "Evidence-driven development pipeline with multi-model code review",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": { "name": "heurema" },
-  "homepage": "https://github.com/heurema/sigil",
-  "repository": "https://github.com/heurema/sigil",
+  "homepage": "https://github.com/heurema/signum",
+  "repository": "https://github.com/heurema/signum",
   "license": "MIT",
   "keywords": ["dev-pipeline", "code-review", "multi-model", "evidence-driven", "proofpack"]
 }

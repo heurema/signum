@@ -1,5 +1,5 @@
 ---
-name: sigil
+name: signum
 description: Evidence-driven development pipeline with multi-model code review. Generates code against a contract, audits with 3 independent AI models, and packages proof for CI.
 arguments:
   - name: task
@@ -7,9 +7,9 @@ arguments:
     required: true
 ---
 
-# Sigil v2: Evidence-Driven Development Pipeline
+# Signum v2: Evidence-Driven Development Pipeline
 
-You are the Sigil orchestrator. You drive a 4-phase evidence-driven pipeline:
+You are the Signum orchestrator. You drive a 4-phase evidence-driven pipeline:
 
 ```
 CONTRACT → EXECUTE → AUDIT → PACK
@@ -22,9 +22,9 @@ The user's task: `$ARGUMENTS`
 Use the Bash tool to prepare the workspace:
 
 ```bash
-mkdir -p .sigil/reviews
+mkdir -p .signum/reviews
 touch .gitignore
-grep -q '^\.sigil/$' .gitignore || echo '.sigil/' >> .gitignore
+grep -q '^\.signum/$' .gitignore || echo '.signum/' >> .gitignore
 ```
 
 Record `PROJECT_ROOT` as the current working directory (output of `pwd`).
@@ -32,20 +32,20 @@ Record `PROJECT_ROOT` as the current working directory (output of `pwd`).
 Check for an existing contract:
 
 ```bash
-test -f .sigil/contract.json && echo "EXISTS" || echo "NONE"
+test -f .signum/contract.json && echo "EXISTS" || echo "NONE"
 ```
 
-If contract.json exists, ask the user: "A previous contract exists in .sigil/contract.json. Resume from Phase 2, or restart from Phase 1 (discards existing contract)?"
+If contract.json exists, ask the user: "A previous contract exists in .signum/contract.json. Resume from Phase 2, or restart from Phase 1 (discards existing contract)?"
 
 Wait for the user's answer before continuing. If restart, delete the existing artifacts:
 
 ```bash
-rm -f .sigil/contract.json .sigil/execute_log.json .sigil/combined.patch \
-       .sigil/baseline.json .sigil/mechanic_report.json \
-       .sigil/audit_summary.json .sigil/proofpack.json \
-       .sigil/reviews/claude.json .sigil/reviews/codex.json .sigil/reviews/gemini.json \
-       .sigil/review_prompt_codex.txt .sigil/review_prompt_gemini.txt \
-       .sigil/reviews/codex_raw.txt .sigil/reviews/gemini_raw.txt
+rm -f .signum/contract.json .signum/execute_log.json .signum/combined.patch \
+       .signum/baseline.json .signum/mechanic_report.json \
+       .signum/audit_summary.json .signum/proofpack.json \
+       .signum/reviews/claude.json .signum/reviews/codex.json .signum/reviews/gemini.json \
+       .signum/review_prompt_codex.txt .signum/review_prompt_gemini.txt \
+       .signum/reviews/codex_raw.txt .signum/reviews/gemini_raw.txt
 ```
 
 ---
@@ -62,7 +62,7 @@ Use the Agent tool to launch the "contractor" agent with this prompt:
 FEATURE_REQUEST: <the user's task from $ARGUMENTS>
 PROJECT_ROOT: <output of pwd>
 
-Scan the codebase, assess risk, and write .sigil/contract.json.
+Scan the codebase, assess risk, and write .signum/contract.json.
 ```
 
 ### Step 1.2: Validate contract
@@ -70,9 +70,9 @@ Scan the codebase, assess risk, and write .sigil/contract.json.
 Use the Bash tool to verify the contract was written and has required fields:
 
 ```bash
-test -f .sigil/contract.json || { echo "ERROR: contract.json not found"; exit 1; }
+test -f .signum/contract.json || { echo "ERROR: contract.json not found"; exit 1; }
 jq -e '.schemaVersion and .goal and .inScope and .acceptanceCriteria and .riskLevel' \
-  .sigil/contract.json > /dev/null && echo "VALID" || echo "INVALID"
+  .signum/contract.json > /dev/null && echo "VALID" || echo "INVALID"
 ```
 
 If the file is missing or INVALID, stop and report: "Contractor agent failed to produce a valid contract.json. Check agent output for errors."
@@ -83,7 +83,7 @@ Use the Bash tool:
 
 ```bash
 jq -r 'if (.openQuestions | length) > 0 then "BLOCKED: " + (.openQuestions | join("\n  - ")) else "OK" end' \
-  .sigil/contract.json
+  .signum/contract.json
 ```
 
 If output starts with `BLOCKED:`, display the open questions to the user exactly as listed, then **STOP**.
@@ -99,14 +99,14 @@ jq -r '"Goal: " + .goal,
        "Risk: " + .riskLevel,
        "In scope: " + (.inScope | join(", ")),
        "Acceptance criteria: " + (.acceptanceCriteria | length | tostring) + " defined"' \
-  .sigil/contract.json
+  .signum/contract.json
 ```
 
 Also display any riskSignals if riskLevel is "high":
 
 ```bash
 jq -r 'if .riskLevel == "high" then "Risk signals: " + (.riskSignals // [] | join(", ")) else empty end' \
-  .sigil/contract.json
+  .signum/contract.json
 ```
 
 **Ask the user to confirm before proceeding to Phase 2.** Display: "Contract ready. Proceed with implementation? (yes/no)"
@@ -124,9 +124,9 @@ Wait for confirmation. If the user says no, stop.
 Use the Agent tool to launch the "engineer" agent with this prompt:
 
 ```
-Read .sigil/contract.json and implement the required changes.
+Read .signum/contract.json and implement the required changes.
 Establish baseline, implement, run the repair loop (max 3 attempts), save artifacts.
-Write .sigil/combined.patch and .sigil/execute_log.json.
+Write .signum/combined.patch and .signum/execute_log.json.
 ```
 
 ### Step 2.2: Check result
@@ -134,8 +134,8 @@ Write .sigil/combined.patch and .sigil/execute_log.json.
 Use the Bash tool:
 
 ```bash
-test -f .sigil/execute_log.json || { echo "ERROR: execute_log.json not found"; exit 1; }
-jq -r '.status' .sigil/execute_log.json
+test -f .signum/execute_log.json || { echo "ERROR: execute_log.json not found"; exit 1; }
+jq -r '.status' .signum/execute_log.json
 ```
 
 If status is `FAILED`, display the failure details and **STOP**:
@@ -145,15 +145,15 @@ jq -r '"Attempt failures:",
        (.attempts[] | "  Attempt " + (.number | tostring) + ": " +
          (.checks | to_entries[] | select(.value.passed == false) |
            "  " + .key + " failed: " + (.value.error // "no error message")))' \
-  .sigil/execute_log.json 2>/dev/null || jq . .sigil/execute_log.json
+  .signum/execute_log.json 2>/dev/null || jq . .signum/execute_log.json
 ```
 
-Report: "Engineer agent failed after all attempts. Fix the issues above and re-run /sigil."
+Report: "Engineer agent failed after all attempts. Fix the issues above and re-run /signum."
 
 If status is `SUCCESS`, verify the patch exists:
 
 ```bash
-test -f .sigil/combined.patch && wc -l .sigil/combined.patch || echo "WARNING: combined.patch missing"
+test -f .signum/combined.patch && wc -l .signum/combined.patch || echo "WARNING: combined.patch missing"
 ```
 
 ### Step 2.3: Display execution summary
@@ -164,7 +164,7 @@ Use the Bash tool:
 jq -r '"Attempts used: " + (.totalAttempts | tostring) + "/" + (.maxAttempts | tostring),
        "Acceptance criteria passed: " +
          ([.attempts[-1].checks | to_entries[] | select(.value.passed == true)] | length | tostring)' \
-  .sigil/execute_log.json
+  .signum/execute_log.json
 ```
 
 ---
@@ -220,7 +220,7 @@ jq -n \
     typecheck: { status: $type_status,  exitCode: $type_exit },
     tests:     { status: $test_status,  exitCode: $test_exit },
     baselineComparison: "checked"
-  }' > .sigil/mechanic_report.json
+  }' > .signum/mechanic_report.json
 
 echo "Mechanic done. Lint=$LINT_EXIT Typecheck=$TYPE_EXIT Tests=$TEST_EXIT"
 ```
@@ -232,15 +232,15 @@ If any check fails, continue to reviews — mechanic failure influences the fina
 Use the Agent tool to launch the "reviewer-claude" agent with this prompt:
 
 ```
-Read .sigil/contract.json, .sigil/combined.patch, and .sigil/mechanic_report.json.
-Follow lib/prompts/review-template.md and write your review to .sigil/reviews/claude.json.
+Read .signum/contract.json, .signum/combined.patch, and .signum/mechanic_report.json.
+Follow lib/prompts/review-template.md and write your review to .signum/reviews/claude.json.
 Write ONLY the JSON object, no markers, no markdown.
 ```
 
 After it finishes, verify the output exists:
 
 ```bash
-test -f .sigil/reviews/claude.json && jq -e '.verdict' .sigil/reviews/claude.json > /dev/null \
+test -f .signum/reviews/claude.json && jq -e '.verdict' .signum/reviews/claude.json > /dev/null \
   && echo "claude review OK" || echo "WARNING: claude.json missing or invalid"
 ```
 
@@ -257,49 +257,49 @@ which codex > /dev/null 2>&1 && echo "AVAILABLE" || echo "UNAVAILABLE"
 Build the review prompt by substituting template variables:
 
 ```bash
-CONTRACT=$(cat .sigil/contract.json)
-DIFF=$(cat .sigil/combined.patch)
-MECHANIC=$(cat .sigil/mechanic_report.json)
+CONTRACT=$(cat .signum/contract.json)
+DIFF=$(cat .signum/combined.patch)
+MECHANIC=$(cat .signum/mechanic_report.json)
 
 sed -e "s|{contract_json}|$CONTRACT|g" \
     -e "s|{diff}|$DIFF|g" \
     -e "s|{mechanic_report}|$MECHANIC|g" \
-    lib/prompts/review-template.md > .sigil/review_prompt_codex.txt
+    lib/prompts/review-template.md > .signum/review_prompt_codex.txt
 ```
 
 Run codex and attempt 3-level parsing:
 
 ```bash
 # Run codex
-timeout 180 codex -q "$(cat .sigil/review_prompt_codex.txt)" > .sigil/reviews/codex_raw.txt 2>&1
+timeout 180 codex -q "$(cat .signum/review_prompt_codex.txt)" > .signum/reviews/codex_raw.txt 2>&1
 CODEX_EXIT=$?
 
 # Level 1: valid JSON directly
-if jq -e '.verdict' .sigil/reviews/codex_raw.txt > /dev/null 2>&1; then
-  cp .sigil/reviews/codex_raw.txt .sigil/reviews/codex.json
+if jq -e '.verdict' .signum/reviews/codex_raw.txt > /dev/null 2>&1; then
+  cp .signum/reviews/codex_raw.txt .signum/reviews/codex.json
   echo "codex: parsed as direct JSON"
 
 # Level 2: extract between markers
-elif grep -q '###SIGIL_REVIEW_START###' .sigil/reviews/codex_raw.txt; then
-  sed -n '/###SIGIL_REVIEW_START###/,/###SIGIL_REVIEW_END###/p' .sigil/reviews/codex_raw.txt \
-    | grep -v '###SIGIL_REVIEW' > /tmp/codex_extracted.json
+elif grep -q '###SIGNUM_REVIEW_START###' .signum/reviews/codex_raw.txt; then
+  sed -n '/###SIGNUM_REVIEW_START###/,/###SIGNUM_REVIEW_END###/p' .signum/reviews/codex_raw.txt \
+    | grep -v '###SIGNUM_REVIEW' > /tmp/codex_extracted.json
   if jq -e '.verdict' /tmp/codex_extracted.json > /dev/null 2>&1; then
-    cp /tmp/codex_extracted.json .sigil/reviews/codex.json
+    cp /tmp/codex_extracted.json .signum/reviews/codex.json
     echo "codex: parsed via markers"
   else
-    RAW=$(cat .sigil/reviews/codex_raw.txt | head -c 2000)
+    RAW=$(cat .signum/reviews/codex_raw.txt | head -c 2000)
     jq -n --arg raw "$RAW" \
       '{"verdict":"CONDITIONAL","findings":[],"summary":"Could not parse codex output","parseOk":false,"raw":$raw}' \
-      > .sigil/reviews/codex.json
+      > .signum/reviews/codex.json
     echo "codex: marker extraction failed, saved raw"
   fi
 
 # Level 3: save raw, mark unparseable
 else
-  RAW=$(cat .sigil/reviews/codex_raw.txt | head -c 2000)
+  RAW=$(cat .signum/reviews/codex_raw.txt | head -c 2000)
   jq -n --arg raw "$RAW" \
     '{"verdict":"CONDITIONAL","findings":[],"summary":"Could not parse codex output","parseOk":false,"raw":$raw}' \
-    > .sigil/reviews/codex.json
+    > .signum/reviews/codex.json
   echo "codex: no markers found, saved raw"
 fi
 ```
@@ -308,7 +308,7 @@ fi
 
 ```bash
 echo '{"verdict":"UNAVAILABLE","findings":[],"summary":"Codex CLI not installed","available":false}' \
-  > .sigil/reviews/codex.json
+  > .signum/reviews/codex.json
 ```
 
 ### Step 3.4: Reviewer-Gemini (CLI)
@@ -324,45 +324,45 @@ which gemini > /dev/null 2>&1 && echo "AVAILABLE" || echo "UNAVAILABLE"
 Build the prompt (same template, separate file):
 
 ```bash
-CONTRACT=$(cat .sigil/contract.json)
-DIFF=$(cat .sigil/combined.patch)
-MECHANIC=$(cat .sigil/mechanic_report.json)
+CONTRACT=$(cat .signum/contract.json)
+DIFF=$(cat .signum/combined.patch)
+MECHANIC=$(cat .signum/mechanic_report.json)
 
 sed -e "s|{contract_json}|$CONTRACT|g" \
     -e "s|{diff}|$DIFF|g" \
     -e "s|{mechanic_report}|$MECHANIC|g" \
-    lib/prompts/review-template.md > .sigil/review_prompt_gemini.txt
+    lib/prompts/review-template.md > .signum/review_prompt_gemini.txt
 ```
 
 Run gemini with same 3-level parsing:
 
 ```bash
-timeout 180 gemini -p "$(cat .sigil/review_prompt_gemini.txt)" > .sigil/reviews/gemini_raw.txt 2>&1
+timeout 180 gemini -p "$(cat .signum/review_prompt_gemini.txt)" > .signum/reviews/gemini_raw.txt 2>&1
 GEMINI_EXIT=$?
 
-if jq -e '.verdict' .sigil/reviews/gemini_raw.txt > /dev/null 2>&1; then
-  cp .sigil/reviews/gemini_raw.txt .sigil/reviews/gemini.json
+if jq -e '.verdict' .signum/reviews/gemini_raw.txt > /dev/null 2>&1; then
+  cp .signum/reviews/gemini_raw.txt .signum/reviews/gemini.json
   echo "gemini: parsed as direct JSON"
 
-elif grep -q '###SIGIL_REVIEW_START###' .sigil/reviews/gemini_raw.txt; then
-  sed -n '/###SIGIL_REVIEW_START###/,/###SIGIL_REVIEW_END###/p' .sigil/reviews/gemini_raw.txt \
-    | grep -v '###SIGIL_REVIEW' > /tmp/gemini_extracted.json
+elif grep -q '###SIGNUM_REVIEW_START###' .signum/reviews/gemini_raw.txt; then
+  sed -n '/###SIGNUM_REVIEW_START###/,/###SIGNUM_REVIEW_END###/p' .signum/reviews/gemini_raw.txt \
+    | grep -v '###SIGNUM_REVIEW' > /tmp/gemini_extracted.json
   if jq -e '.verdict' /tmp/gemini_extracted.json > /dev/null 2>&1; then
-    cp /tmp/gemini_extracted.json .sigil/reviews/gemini.json
+    cp /tmp/gemini_extracted.json .signum/reviews/gemini.json
     echo "gemini: parsed via markers"
   else
-    RAW=$(cat .sigil/reviews/gemini_raw.txt | head -c 2000)
+    RAW=$(cat .signum/reviews/gemini_raw.txt | head -c 2000)
     jq -n --arg raw "$RAW" \
       '{"verdict":"CONDITIONAL","findings":[],"summary":"Could not parse gemini output","parseOk":false,"raw":$raw}' \
-      > .sigil/reviews/gemini.json
+      > .signum/reviews/gemini.json
     echo "gemini: marker extraction failed, saved raw"
   fi
 
 else
-  RAW=$(cat .sigil/reviews/gemini_raw.txt | head -c 2000)
+  RAW=$(cat .signum/reviews/gemini_raw.txt | head -c 2000)
   jq -n --arg raw "$RAW" \
     '{"verdict":"CONDITIONAL","findings":[],"summary":"Could not parse gemini output","parseOk":false,"raw":$raw}' \
-    > .sigil/reviews/gemini.json
+    > .signum/reviews/gemini.json
   echo "gemini: no markers found, saved raw"
 fi
 ```
@@ -371,7 +371,7 @@ fi
 
 ```bash
 echo '{"verdict":"UNAVAILABLE","findings":[],"summary":"Gemini CLI not installed","available":false}' \
-  > .sigil/reviews/gemini.json
+  > .signum/reviews/gemini.json
 ```
 
 ### Step 3.5: Synthesizer (agent)
@@ -379,15 +379,15 @@ echo '{"verdict":"UNAVAILABLE","findings":[],"summary":"Gemini CLI not installed
 Use the Agent tool to launch the "synthesizer" agent with this prompt:
 
 ```
-Read .sigil/mechanic_report.json, .sigil/reviews/claude.json,
-.sigil/reviews/codex.json, and .sigil/reviews/gemini.json.
-Apply deterministic synthesis rules and write .sigil/audit_summary.json.
+Read .signum/mechanic_report.json, .signum/reviews/claude.json,
+.signum/reviews/codex.json, and .signum/reviews/gemini.json.
+Apply deterministic synthesis rules and write .signum/audit_summary.json.
 ```
 
 After it finishes, read and display the audit summary:
 
 ```bash
-test -f .sigil/audit_summary.json || { echo "ERROR: audit_summary.json not found"; exit 1; }
+test -f .signum/audit_summary.json || { echo "ERROR: audit_summary.json not found"; exit 1; }
 
 jq -r '"=== AUDIT SUMMARY ===",
        "Mechanic: " + .mechanic,
@@ -398,7 +398,7 @@ jq -r '"=== AUDIT SUMMARY ===",
        "Consensus: " + .consensus,
        "DECISION: " + .decision,
        "Reasoning: " + .reasoning' \
-  .sigil/audit_summary.json
+  .signum/audit_summary.json
 ```
 
 ---
@@ -412,8 +412,8 @@ jq -r '"=== AUDIT SUMMARY ===",
 Use the Bash tool:
 
 ```bash
-sha256sum .sigil/contract.json .sigil/combined.patch \
-          .sigil/mechanic_report.json .sigil/audit_summary.json 2>/dev/null \
+sha256sum .signum/contract.json .signum/combined.patch \
+          .signum/mechanic_report.json .signum/audit_summary.json 2>/dev/null \
   | awk '{print $2, $1}' | sort
 ```
 
@@ -422,20 +422,20 @@ sha256sum .sigil/contract.json .sigil/combined.patch \
 Use the Bash tool to build the full proofpack:
 
 ```bash
-DECISION=$(jq -r '.decision' .sigil/audit_summary.json)
-GOAL=$(jq -r '.goal' .sigil/contract.json)
-RISK=$(jq -r '.riskLevel' .sigil/contract.json)
-ATTEMPTS=$(jq -r '.totalAttempts' .sigil/execute_log.json 2>/dev/null || echo "unknown")
-MECHANIC=$(jq -r '.mechanic' .sigil/audit_summary.json)
+DECISION=$(jq -r '.decision' .signum/audit_summary.json)
+GOAL=$(jq -r '.goal' .signum/contract.json)
+RISK=$(jq -r '.riskLevel' .signum/contract.json)
+ATTEMPTS=$(jq -r '.totalAttempts' .signum/execute_log.json 2>/dev/null || echo "unknown")
+MECHANIC=$(jq -r '.mechanic' .signum/audit_summary.json)
 RUN_DATE=$(date +%Y-%m-%d)
 RUN_RANDOM=$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 6)
-RUN_ID="sigil-${RUN_DATE}-${RUN_RANDOM}"
+RUN_ID="signum-${RUN_DATE}-${RUN_RANDOM}"
 
 # Compute individual checksums
-sum_contract=$(sha256sum .sigil/contract.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
-sum_patch=$(sha256sum .sigil/combined.patch 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
-sum_mechanic=$(sha256sum .sigil/mechanic_report.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
-sum_audit=$(sha256sum .sigil/audit_summary.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
+sum_contract=$(sha256sum .signum/contract.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
+sum_patch=$(sha256sum .signum/combined.patch 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
+sum_mechanic=$(sha256sum .signum/mechanic_report.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
+sum_audit=$(sha256sum .signum/audit_summary.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
 
 jq -n \
   --arg schema "2.0" \
@@ -469,7 +469,7 @@ jq -n \
     },
     summary: $summary,
     executeLog: "execute_log.json"
-  }' > .sigil/proofpack.json
+  }' > .signum/proofpack.json
 
 echo "Proofpack written: $RUN_ID"
 ```
@@ -483,18 +483,18 @@ Display to the user:
 Use the Bash tool to list all produced artifacts:
 
 ```bash
-echo "=== Artifacts in .sigil/ ==="
-ls -1 .sigil/ .sigil/reviews/ 2>/dev/null
+echo "=== Artifacts in .signum/ ==="
+ls -1 .signum/ .signum/reviews/ 2>/dev/null
 echo ""
-echo "Decision: $(jq -r .decision .sigil/proofpack.json)"
-echo "Run ID:   $(jq -r .runId   .sigil/proofpack.json)"
+echo "Decision: $(jq -r .decision .signum/proofpack.json)"
+echo "Run ID:   $(jq -r .runId   .signum/proofpack.json)"
 ```
 
 Then display the appropriate next steps based on the decision:
 
-- **AUTO_OK**: "Changes are verified. Review `.sigil/combined.patch` and commit when ready."
-- **AUTO_BLOCK**: "Issues found. Review `.sigil/audit_summary.json` and fix before committing."
-- **HUMAN_REVIEW**: "Manual review recommended. Check `.sigil/audit_summary.json` for details."
+- **AUTO_OK**: "Changes are verified. Review `.signum/combined.patch` and commit when ready."
+- **AUTO_BLOCK**: "Issues found. Review `.signum/audit_summary.json` and fix before committing."
+- **HUMAN_REVIEW**: "Manual review recommended. Check `.signum/audit_summary.json` for details."
 
 ---
 
