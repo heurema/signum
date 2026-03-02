@@ -6,8 +6,5 @@
   "homepage": "https://github.com/heurema/sigil",
   "repository": "https://github.com/heurema/sigil",
   "license": "MIT",
-  "keywords": ["dev-pipeline", "code-review", "multi-model", "evidence-driven", "proofpack"],
-  "status": "active",
-  "owner": "heurema",
-  "tags": ["devtools", "pipeline", "code-review"]
+  "keywords": ["dev-pipeline", "code-review", "multi-model", "evidence-driven", "proofpack"]
 }
