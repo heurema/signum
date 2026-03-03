@@ -16,7 +16,7 @@ Signum parses the task description and runs the full 4-phase pipeline automatica
 /signum add a health check endpoint that returns 200 OK
 ```
 
-Pipeline: contractor → engineer (1 attempt) → mechanic + Claude review → proofpack.
+Pipeline: contractor → baseline → engineer (1 attempt) → scope gate → mechanic + Claude review → proofpack.
 Estimated cost: ~$0.10-0.20.
 
 ### Authentication (medium risk)
@@ -25,7 +25,7 @@ Estimated cost: ~$0.10-0.20.
 /signum add user authentication with JWT tokens
 ```
 
-Pipeline: contractor → engineer (up to 3 repair attempts) → mechanic + Claude + Codex + Gemini → synthesizer → proofpack.
+Pipeline: contractor → baseline → engineer (up to 3 repair attempts) → scope gate → mechanic + holdouts + Claude + Codex (security) + Gemini (performance) → synthesizer → proofpack.
 Estimated cost: ~$0.30-0.60.
 
 ### Database migration (high risk)
@@ -34,7 +34,7 @@ Estimated cost: ~$0.30-0.60.
 /signum migrate user table from MongoDB to PostgreSQL
 ```
 
-Pipeline: same as medium but contractor flags high risk with risk signals. All 3 model reviews weighted equally in synthesis.
+Pipeline: same as medium but contractor flags high risk with risk signals and holdout scenarios. All 3 model reviews weighted equally in synthesis.
 Estimated cost: ~$0.50-1.00.
 
 ### Resume interrupted pipeline
@@ -58,32 +58,38 @@ CONTRACT → EXECUTE → AUDIT → PACK
 
 ### Phase 1: CONTRACT
 
-Contractor agent (haiku) scans the codebase and produces `.signum/contract.json` — a structured specification with goal, scope, acceptance criteria, and risk assessment.
+Contractor agent (haiku) scans the codebase and produces `.signum/contract.json` — a structured specification with goal, scope, acceptance criteria, holdout scenarios, and risk assessment.
 
 Hard stop if `openQuestions` is non-empty — the user must answer before proceeding.
 
 ### Phase 2: EXECUTE
 
-Engineer agent (sonnet) implements the contract. Repair loop: up to 3 attempts of implement → check acceptance criteria → fix failures.
+1. **Baseline capture** — orchestrator runs lint/typecheck/tests BEFORE any changes, saves to `.signum/baseline.json`.
+2. **Engineer agent** (sonnet) implements the contract. Repair loop: up to 3 attempts of implement → check acceptance criteria → fix failures.
+3. **Scope gate** — deterministic check that all modified files are within `inScope` or `allowNewFilesUnder`. Pipeline stops on scope violation.
 
-Outputs: `.signum/combined.patch`, `.signum/execute_log.json`.
+Outputs: `.signum/baseline.json`, `.signum/combined.patch`, `.signum/execute_log.json`.
 
 ### Phase 3: AUDIT
 
-Three independent verification layers:
+Five independent verification layers:
 
-1. **Mechanic** (bash, zero LLM) — runs linter, typechecker, tests. Auto-detects ruff/eslint, mypy/tsc, pytest/npm test/cargo test.
-2. **Claude reviewer** (opus agent) — semantic review of contract + diff + mechanic results.
-3. **External reviewers** (Codex CLI + Gemini CLI) — same review template, 3-level output parser, optional (continue if unavailable).
+1. **Mechanic** (bash, zero LLM) — runs linter, typechecker, tests. Compares with baseline to detect regressions vs pre-existing failures.
+2. **Holdout validation** — runs hidden acceptance criteria the Engineer never saw (edge cases, negative tests from contract).
+3. **Claude reviewer** (opus agent) — semantic review of contract + diff + mechanic results.
+4. **Codex reviewer** (CLI, security-focused) — analyzes diff for security defects using `review-template-security.md`.
+5. **Gemini reviewer** (CLI, performance-focused) — analyzes diff for performance defects using `review-template-performance.md`.
 
 Synthesizer agent applies deterministic rules:
-- **AUTO_OK**: all available reviews APPROVE + mechanic passes + 2+ reviews parsed
-- **AUTO_BLOCK**: any REJECT or CRITICAL finding or mechanic fails
-- **HUMAN_REVIEW**: everything else (mixed signals, only 1 review, CONDITIONAL verdicts)
+- **AUTO_OK**: no regressions + all reviews APPROVE + 2+ reviews parsed + holdouts pass
+- **AUTO_BLOCK**: any regression (NEW failure vs baseline) OR any REJECT OR any CRITICAL finding
+- **HUMAN_REVIEW**: everything else (mixed signals, only 1 review, CONDITIONAL verdicts, holdout failures)
+
+Pre-existing failures (checks that failed in baseline AND still fail) no longer auto-block.
 
 ### Phase 4: PACK
 
-Assembles `.signum/proofpack.json` — machine-readable evidence bundle with SHA-256 checksums for every artifact.
+Assembles `.signum/proofpack.json` — machine-readable evidence bundle with SHA-256 checksums for every artifact and confidence score.
 
 ## Artifacts
 
@@ -91,25 +97,29 @@ All artifacts are stored in `.signum/` (auto-added to `.gitignore`):
 
 | File | Phase | Contents |
 |------|-------|----------|
-| `contract.json` | Contract | Goal, scope, acceptance criteria, risk level |
+| `contract.json` | Contract | Goal, scope, acceptance criteria, holdout scenarios, risk level |
+| `baseline.json` | Execute | Pre-change lint/typecheck/test exit codes |
 | `combined.patch` | Execute | Full git diff of all changes |
 | `execute_log.json` | Execute | Attempt history, check results, status |
-| `mechanic_report.json` | Audit | Lint, typecheck, test results with exit codes |
+| `mechanic_report.json` | Audit | Lint, typecheck, test results with baseline comparison and regression flags |
+| `holdout_report.json` | Audit | Holdout scenario pass/fail counts |
 | `reviews/claude.json` | Audit | Claude opus semantic review |
-| `reviews/codex.json` | Audit | Codex CLI review (or unavailable marker) |
-| `reviews/gemini.json` | Audit | Gemini CLI review (or unavailable marker) |
-| `audit_summary.json` | Audit | Synthesized decision with consensus reasoning |
-| `proofpack.json` | Pack | Complete evidence bundle with checksums |
+| `reviews/codex.json` | Audit | Codex CLI security review (or unavailable marker) |
+| `reviews/gemini.json` | Audit | Gemini CLI performance review (or unavailable marker) |
+| `audit_summary.json` | Audit | Synthesized decision with consensus reasoning and confidence scores |
+| `proofpack.json` | Pack | Complete evidence bundle with checksums and confidence |
 
 ### contract.json fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schemaVersion` | `"2.0"` | Always "2.0" |
+| `schemaVersion` | `"3.0"` | Always "3.0" |
 | `goal` | string | What to build (min 10 chars) |
 | `inScope` | string[] | Items in scope (min 1) |
+| `allowNewFilesUnder` | string[] | Directories where new files may be created (optional) |
 | `outOfScope` | string[] | Explicitly excluded items |
 | `acceptanceCriteria` | object[] | AC-N items with verify commands |
+| `holdoutScenarios` | object[] | Hidden ACs not shown to Engineer (optional) |
 | `riskLevel` | `low\|medium\|high` | Deterministic risk assessment |
 | `riskSignals` | string[] | Why risk level was assigned |
 | `openQuestions` | string[] | Must be empty to proceed |
@@ -118,11 +128,22 @@ All artifacts are stored in `.signum/` (auto-added to `.gitignore`):
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schemaVersion` | `"2.0"` | Always "2.0" |
+| `schemaVersion` | `"3.0"` | Always "3.0" |
 | `runId` | string | `signum-YYYY-MM-DD-XXXXXX` |
 | `decision` | `AUTO_OK\|AUTO_BLOCK\|HUMAN_REVIEW` | Final verdict |
 | `checksums` | object | SHA-256 of each artifact |
+| `confidence` | object | `{ overall: 0-100 }` — weighted confidence score |
 | `summary` | string | One-line human-readable summary |
+
+### Confidence scoring
+
+The synthesizer computes a weighted confidence score (0-100):
+
+| Component | Weight | Source |
+|-----------|--------|--------|
+| `execution_health` | 40% | ACs passed ratio minus repair attempt penalty |
+| `baseline_stability` | 30% | Proportion of checks with no regressions |
+| `review_alignment` | 30% | Reviewer agreement level (100=unanimous approve, 0=no approvals) |
 
 ### Review JSON format
 
@@ -150,11 +171,12 @@ Each reviewer produces:
 | Dependency | Required | Purpose |
 |-----------|----------|---------|
 | Claude Code | Yes | Runtime environment |
-| git | Yes | Diff generation |
+| git | Yes | Diff generation, scope gate |
 | jq | Yes | JSON validation and assembly |
-| sha256sum | Yes | Checksum computation |
-| Codex CLI | No | External review in AUDIT phase |
-| Gemini CLI | No | External review in AUDIT phase |
+| python3 | Yes | Review prompt template substitution |
+| sha256sum or shasum | Yes | Checksum computation (auto-detected) |
+| Codex CLI | No | Security-focused review in AUDIT phase |
+| Gemini CLI | No | Performance-focused review in AUDIT phase |
 
 ## Troubleshooting
 

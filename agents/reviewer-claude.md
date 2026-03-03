@@ -9,7 +9,7 @@ tools: [Read, Grep, Glob, Bash]
 maxTurns: 5
 ---
 
-You are the Claude reviewer in Signum v2's multi-model audit panel.
+You are the Claude reviewer in Signum v3's multi-model audit panel.
 
 ## Input
 

@@ -4,9 +4,9 @@
 
 Contract-first, multi-model-verified, proof-packaged.
 
-Signum treats every development task as a formal contract. Before any code is written, a structured `contract.json` captures the exact acceptance criteria, affected files, and test strategy. Implementation is measured against the contract. A panel of independent AI models audits the result. Everything is packaged into a `proofpack.json` that serves as a CI-gate artifact.
+Signum treats every development task as a formal contract. Before any code is written, a structured `contract.json` captures the exact acceptance criteria, affected files, holdout scenarios, and test strategy. Implementation is measured against the contract. A panel of independent AI models audits the result from specialized angles. Everything is packaged into a `proofpack.json` that serves as a CI-gate artifact.
 
-The core insight: a single-model review is a self-audit. Signum removes that by routing the finished diff to models with different training provenance — Claude Opus, OpenAI Codex, and Google Gemini — each reviewing blind, without seeing the others' findings.
+The core insight: a single-model review is a self-audit. Signum removes that by routing the finished diff to models with different training provenance — Claude Opus for semantic review, OpenAI Codex for security audit, and Google Gemini for performance audit — each reviewing blind, without seeing the others' findings.
 
 ## Pipeline
 
@@ -14,7 +14,8 @@ The core insight: a single-model review is a self-audit. Signum removes that by 
 CONTRACT → EXECUTE → AUDIT → PACK
                        ↓
                   ┌────┼────┐
-               Claude Codex Gemini
+              Claude  Codex  Gemini
+            (semantic)(security)(perf)
                   └────┼────┘
                        ↓
                   proofpack.json
@@ -28,114 +29,102 @@ The contractor ingests the task description and produces `contract.json`:
 
 ```json
 {
-  "task": "...",
-  "acceptance_criteria": [...],
-  "affected_files": [...],
-  "test_strategy": "...",
-  "risk": "low|medium|high"
+  "goal": "...",
+  "inScope": [...],
+  "acceptanceCriteria": [...],
+  "holdoutScenarios": [...],
+  "riskLevel": "low|medium|high"
 }
 ```
 
-Risk is assessed structurally (file count, keywords, surface area) and drives model selection for all downstream phases. The contract is shown to the user before execution begins — this is the only approval gate.
+Risk is assessed structurally (file count, keywords, surface area). Holdout scenarios are edge cases or negative tests that the Engineer will never see — they serve as blind validation after implementation. The contract is shown to the user before execution begins — this is the only approval gate.
 
 ### Phase 2: EXECUTE
 
-**Agent:** Engineer (sonnet)
+**Orchestrator:** captures baseline, launches Engineer, enforces scope gate.
 
-The engineer implements against the contract with a 3-attempt repair loop:
+1. **Baseline capture**: orchestrator runs lint/typecheck/tests BEFORE any changes and saves exit codes to `.signum/baseline.json`. This is the trust anchor for regression detection.
+2. **Engineer** (sonnet) implements against the contract with a 3-attempt repair loop.
+3. **Scope gate**: deterministic check that all modified files are within `inScope` or `allowNewFilesUnder`. Stops pipeline on violation.
 
-1. Implement changes
-2. Run tests and linters
-3. If failures: read errors, patch, retry (up to 3 times)
-
-If the repair loop exhausts its attempts, execution halts with a BLOCKED status and the error log is written to the proofpack.
-
-All changes land on a feature branch. The finished diff is extracted and passed to AUDIT.
+The baseline is captured by the orchestrator, not the Engineer — this prevents self-reporting bias.
 
 ### Phase 3: AUDIT
 
-**Agents:** Reviewer-Claude (opus), Reviewer-Codex (CLI), Reviewer-Gemini (CLI), Synthesizer (sonnet)
+**Agents:** Mechanic (bash), Reviewer-Claude (opus), Reviewer-Codex (CLI), Reviewer-Gemini (CLI), Synthesizer (sonnet)
 
-The multi-model audit panel is the primary differentiator. Each reviewer receives:
-- The contract (acceptance criteria, affected files)
-- The unified diff only — never the full codebase
+The multi-model audit panel is the primary differentiator.
 
-Reviews run sequentially (CLI constraint). Each reviewer produces structured findings: file, line range, severity (critical/important/minor), claim, evidence.
+**Mechanic** runs lint, typecheck, and tests, then compares with baseline to flag regressions. Pre-existing failures that existed before the Engineer's changes are not counted as regressions.
 
-**Finding validation** runs on every result before it reaches synthesis:
-1. File exists at the claimed path
-2. Line range is within file bounds
-3. Evidence grep confirms the cited code pattern
-4. Finding is within the diff scope (not pre-existing code)
+**Holdout validation** runs hidden acceptance criteria that the Engineer never saw. These test edge cases and boundary conditions as blind validation of implementation quality.
 
-Invalid findings are dropped. Valid findings from all providers go to the Synthesizer.
+Each reviewer receives specialized prompts:
+- **Claude** (opus): full semantic review — contract + diff + mechanic results
+- **Codex** (CLI): security-focused — goal + diff only (adversarial isolation)
+- **Gemini** (CLI): performance-focused — goal + diff only (adversarial isolation)
+
+Codex and Gemini receive only the goal and diff — no contract details, no mechanic results. This is intentional adversarial isolation: they cannot be influenced by context that would bias their review.
 
 **Synthesizer** applies deterministic rules:
-- Any critical finding from any provider → **BLOCK**
-- Important finding confirmed by 2+ providers → **WARN**
-- Single-provider important finding → informational
-- Minor findings → collected, not blocking
+- Any regression (NEW failure vs baseline) or critical finding → **AUTO_BLOCK**
+- All reviews approve + no regressions + holdouts pass → **AUTO_OK**
+- Everything else → **HUMAN_REVIEW**
 
-External providers (Codex, Gemini) require explicit consent before dispatch. Use `skip-external` to run Claude-only review. Both CLIs must be authenticated; Signum degrades gracefully if either is unavailable.
+The synthesizer also computes a confidence score (0-100) based on execution health, baseline stability, and review alignment.
 
 ### Phase 4: PACK
 
-**Agent:** Synthesizer (sonnet, continuation)
-
-Assembles `proofpack.json`:
+Assembles `proofpack.json` with SHA-256 checksums and confidence score:
 
 ```json
 {
-  "task": "...",
-  "contract": { ... },
-  "verdict": "PASS|WARN|BLOCK",
-  "audit": {
-    "providers": ["claude", "codex", "gemini"],
-    "findings": [...],
-    "synthesis": "..."
-  },
-  "execution": {
-    "branch": "...",
-    "commits": [...],
-    "tests_passed": true,
-    "repair_attempts": 0
-  },
-  "timestamp": "..."
+  "schemaVersion": "3.0",
+  "runId": "signum-2026-03-03-abc123",
+  "decision": "AUTO_OK",
+  "confidence": { "overall": 92 },
+  "checksums": { ... },
+  "summary": "..."
 }
 ```
 
-PASS and WARN proofpacks are CI-gate artifacts: they prove the change was reviewed by multiple independent models, all findings were surfaced, and the implementation passed tests. BLOCK proofpacks halt the workflow.
+AUTO_OK and HUMAN_REVIEW proofpacks are CI-gate artifacts. AUTO_BLOCK proofpacks halt the workflow.
 
 ## Agents
 
 | Agent | Model | Phase | Responsibility |
 |-------|-------|-------|----------------|
-| Contractor | haiku (low) / sonnet (med/high) | CONTRACT | Parse task, produce contract.json |
-| Engineer | sonnet | EXECUTE | Implement with repair loop |
-| Reviewer-Claude | opus | AUDIT | Semantic review of diff |
-| Reviewer-Codex | codex CLI | AUDIT | Independent review via CLI adapter |
-| Reviewer-Gemini | gemini CLI | AUDIT | Independent review via CLI adapter |
-| Synthesizer | sonnet | AUDIT + PACK | Verdict synthesis, proofpack assembly |
+| Contractor | haiku (low) / sonnet (med/high) | CONTRACT | Parse task, produce contract.json with holdout scenarios |
+| Engineer | sonnet | EXECUTE | Implement with repair loop (reads baseline, does not capture it) |
+| Reviewer-Claude | opus | AUDIT | Semantic review of diff (full context) |
+| Reviewer-Codex | codex CLI | AUDIT | Security-focused review (goal + diff only) |
+| Reviewer-Gemini | gemini CLI | AUDIT | Performance-focused review (goal + diff only) |
+| Synthesizer | sonnet | AUDIT + PACK | Verdict synthesis with confidence scoring, proofpack assembly |
 
 ## CLI Adapter
 
 External model reviews run through a thin CLI adapter that:
-1. Serializes the prompt (contract + diff) to a temp file
+1. Uses python3 to substitute template variables (goal + diff) into the specialized review template
 2. Invokes the CLI with appropriate flags (`--no-interactive`, output to stdout)
-3. Parses structured JSON from stdout
+3. Parses structured JSON from stdout using 3-level parser (direct JSON → marker extraction → raw fallback)
 4. Validates the schema before passing findings to synthesis
 
 If the CLI returns malformed output or a non-zero exit code, the provider is marked `unavailable` in the proofpack — the audit continues with remaining providers.
 
 ## Artifacts
 
-All artifacts are written to `.dev/` (auto-added to `.gitignore`):
+All artifacts are written to `.signum/` (auto-added to `.gitignore`):
 
 | File | Phase | Description |
 |------|-------|-------------|
-| `contract.json` | CONTRACT | Structured task contract |
-| `execution.log` | EXECUTE | Implementation log, repair attempts |
-| `audit/*.json` | AUDIT | Per-provider findings |
+| `contract.json` | CONTRACT | Structured task contract with holdout scenarios |
+| `baseline.json` | EXECUTE | Pre-change check exit codes (captured by orchestrator) |
+| `combined.patch` | EXECUTE | Full git diff |
+| `execute_log.json` | EXECUTE | Implementation log, repair attempts |
+| `mechanic_report.json` | AUDIT | Post-change checks with baseline comparison |
+| `holdout_report.json` | AUDIT | Hidden scenario pass/fail counts |
+| `reviews/*.json` | AUDIT | Per-provider findings (specialized templates) |
+| `audit_summary.json` | AUDIT | Verdict with confidence scores |
 | `proofpack.json` | PACK | Final CI-gate artifact |
 
 ## Cost Estimates
@@ -154,11 +143,11 @@ Costs vary with diff size and contract complexity.
 
 ## Trust Boundaries
 
-**Stays local:** contract generation, orchestration, finding validation, proofpack assembly.
+**Stays local:** contract generation, baseline capture, scope gate, holdout validation, orchestration, proofpack assembly.
 
 **Sent to Anthropic:** feature description, diff, contract (standard Claude Code behavior).
 
-**Sent to external providers (with consent):** diff only — never the full codebase.
+**Sent to external providers (with consent):** goal + diff only — never the full codebase, contract details, or mechanic results (adversarial isolation).
 
 No telemetry. No analytics. No phone-home.
 
@@ -170,3 +159,4 @@ No telemetry. No analytics. No phone-home.
 - **Heuristic risk**: Risk level is computed from file count and keyword patterns, not semantic analysis. It can under-estimate novel refactors.
 - **Interactive only**: Runs inside Claude Code sessions. Not suitable for unattended CI pipelines.
 - **Finding validation**: Catches hallucinated file paths and line ranges, but cannot verify logical correctness of a finding's claim.
+- **Single execution path**: v3 runs one implementation strategy. Multi-path execution (parallel strategies with winner selection) is planned for v3.1.

@@ -3,12 +3,17 @@
   "type": "object",
   "required": ["schemaVersion", "goal", "inScope", "acceptanceCriteria", "riskLevel"],
   "properties": {
-    "schemaVersion": { "type": "string", "const": "2.0" },
+    "schemaVersion": { "type": "string", "const": "3.0" },
     "goal": { "type": "string", "minLength": 10 },
     "inScope": {
       "type": "array",
       "items": { "type": "string" },
       "minItems": 1
+    },
+    "allowNewFilesUnder": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Directories where new files may be created"
     },
     "outOfScope": {
       "type": "array",
@@ -48,6 +53,24 @@
     "openQuestions": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "holdoutScenarios": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "description": { "type": "string" },
+          "verify": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string", "enum": ["command"] },
+              "value": { "type": "string" }
+            }
+          }
+        }
+      },
+      "description": "Hidden acceptance criteria not shown to Engineer"
     },
     "riskLevel": { "type": "string", "enum": ["low", "medium", "high"] },
     "riskSignals": {

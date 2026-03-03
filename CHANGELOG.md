@@ -1,5 +1,31 @@
 # Changelog
 
+## [3.0.0] - 2026-03-03
+
+### Added
+- Trustless baseline capture: orchestrator runs lint/typecheck/tests BEFORE Engineer, saves to baseline.json
+- Deterministic scope gate: verifies all changed files are within inScope after execute phase
+- Holdout scenarios: hidden acceptance criteria in contract that Engineer never sees, run as blind validation
+- Adversarial review templates: Codex gets security-focused template, Gemini gets performance-focused template
+- Confidence scoring: weighted metric (execution health + baseline stability + review alignment) in audit summary
+- Cross-platform sha256: auto-detects sha256sum or shasum (macOS compatibility)
+- allowNewFilesUnder field in contract schema for explicit new file directory permissions
+
+### Changed
+- Schema version bumped to 3.0 (contract, proofpack)
+- Mechanic now compares post-change results with baseline, flags regressions only
+- AUTO_BLOCK triggers on NEW regressions vs baseline, not pre-existing failures
+- Engineer reads baseline (does not capture it), removes self-reporting bias
+- Codex/Gemini receive only goal + diff (adversarial isolation, no contract/mechanic context)
+- Template substitution uses python3 instead of sed (fixes shell injection vulnerability)
+- Extracted JSON temp files use .signum/ instead of /tmp/ (fixes race condition)
+- HUMAN_REVIEW message now suggests refining acceptance criteria instead of manual code review
+- Execute gate requires SUCCESS status explicitly (was only checking for non-FAILED)
+- Engineer handles verify.type: "manual" gracefully (skips in repair loop, logs as manual)
+
+### Planned (v3.1)
+- Multi-path execution: parallel implementation strategies with winner selection via worktree isolation
+
 ## [2.0.1] - 2026-03-02
 
 ### Changed

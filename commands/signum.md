@@ -7,7 +7,7 @@ arguments:
     required: true
 ---
 
-# Signum v2: Evidence-Driven Development Pipeline
+# Signum v3: Evidence-Driven Development Pipeline
 
 You are the Signum orchestrator. You drive a 4-phase evidence-driven pipeline:
 
@@ -43,6 +43,7 @@ Wait for the user's answer before continuing. If restart, delete the existing ar
 rm -f .signum/contract.json .signum/execute_log.json .signum/combined.patch \
        .signum/baseline.json .signum/mechanic_report.json \
        .signum/audit_summary.json .signum/proofpack.json \
+       .signum/holdout_report.json \
        .signum/reviews/claude.json .signum/reviews/codex.json .signum/reviews/gemini.json \
        .signum/review_prompt_codex.txt .signum/review_prompt_gemini.txt \
        .signum/reviews/codex_raw.txt .signum/reviews/gemini_raw.txt
@@ -98,7 +99,8 @@ Use the Bash tool to extract and display:
 jq -r '"Goal: " + .goal,
        "Risk: " + .riskLevel,
        "In scope: " + (.inScope | join(", ")),
-       "Acceptance criteria: " + (.acceptanceCriteria | length | tostring) + " defined"' \
+       "Acceptance criteria: " + (.acceptanceCriteria | length | tostring) + " defined",
+       "Holdout scenarios: " + ((.holdoutScenarios // []) | length | tostring) + " defined"' \
   .signum/contract.json
 ```
 
@@ -119,13 +121,57 @@ Wait for confirmation. If the user says no, stop.
 
 **Goal:** Implement code changes according to the contract.
 
+### Step 2.0: Capture baseline (before any changes)
+
+Use the Bash tool to run project checks BEFORE the engineer touches anything:
+
+```bash
+# Lint
+if [ -f "pyproject.toml" ] && grep -q "ruff" pyproject.toml 2>/dev/null; then
+  BL_LINT_EXIT=$(ruff check . >/dev/null 2>&1; echo $?)
+elif [ -f "package.json" ] && grep -q "eslint" package.json 2>/dev/null; then
+  BL_LINT_EXIT=$(npx eslint . >/dev/null 2>&1; echo $?)
+else
+  BL_LINT_EXIT=0
+fi
+
+# Typecheck
+if [ -f "pyproject.toml" ] && grep -q "mypy" pyproject.toml 2>/dev/null; then
+  BL_TYPE_EXIT=$(mypy . >/dev/null 2>&1; echo $?)
+elif [ -f "tsconfig.json" ]; then
+  BL_TYPE_EXIT=$(npx tsc --noEmit >/dev/null 2>&1; echo $?)
+else
+  BL_TYPE_EXIT=0
+fi
+
+# Tests
+if [ -f "pyproject.toml" ] && grep -q "pytest" pyproject.toml 2>/dev/null; then
+  BL_TEST_EXIT=$(pytest >/dev/null 2>&1; echo $?)
+elif [ -f "package.json" ] && grep -q '"test"' package.json 2>/dev/null; then
+  BL_TEST_EXIT=$(npm test >/dev/null 2>&1; echo $?)
+elif [ -f "Cargo.toml" ]; then
+  BL_TEST_EXIT=$(cargo test >/dev/null 2>&1; echo $?)
+else
+  BL_TEST_EXIT=0
+fi
+
+jq -n \
+  --argjson lint "$BL_LINT_EXIT" \
+  --argjson type "$BL_TYPE_EXIT" \
+  --argjson test "$BL_TEST_EXIT" \
+  '{ lint: $lint, typecheck: $type, tests: $test }' > .signum/baseline.json
+
+echo "Baseline captured: lint=$BL_LINT_EXIT type=$BL_TYPE_EXIT test=$BL_TEST_EXIT"
+```
+
 ### Step 2.1: Launch Engineer
 
 Use the Agent tool to launch the "engineer" agent with this prompt:
 
 ```
 Read .signum/contract.json and implement the required changes.
-Establish baseline, implement, run the repair loop (max 3 attempts), save artifacts.
+Read .signum/baseline.json for pre-existing check state.
+Implement, run the repair loop (max 3 attempts), save artifacts.
 Write .signum/combined.patch and .signum/execute_log.json.
 ```
 
@@ -135,22 +181,21 @@ Use the Bash tool:
 
 ```bash
 test -f .signum/execute_log.json || { echo "ERROR: execute_log.json not found"; exit 1; }
-jq -r '.status' .signum/execute_log.json
+STATUS=$(jq -r '.status' .signum/execute_log.json)
+if [ "$STATUS" != "SUCCESS" ]; then
+  echo "ERROR: Execute status is '$STATUS' (expected SUCCESS)"
+  jq -r '"Attempt failures:",
+         (.attempts[] | "  Attempt " + (.number | tostring) + ": " +
+           (.checks | to_entries[] | select(.value.passed == false) |
+             "  " + .key + " failed: " + (.value.error // "no error message")))' \
+    .signum/execute_log.json 2>/dev/null || jq . .signum/execute_log.json
+  exit 1
+fi
 ```
 
-If status is `FAILED`, display the failure details and **STOP**:
+If exit code is non-zero, report: "Engineer agent failed after all attempts. Fix the issues above and re-run /signum."
 
-```bash
-jq -r '"Attempt failures:",
-       (.attempts[] | "  Attempt " + (.number | tostring) + ": " +
-         (.checks | to_entries[] | select(.value.passed == false) |
-           "  " + .key + " failed: " + (.value.error // "no error message")))' \
-  .signum/execute_log.json 2>/dev/null || jq . .signum/execute_log.json
-```
-
-Report: "Engineer agent failed after all attempts. Fix the issues above and re-run /signum."
-
-If status is `SUCCESS`, verify the patch exists:
+Verify the patch exists:
 
 ```bash
 test -f .signum/combined.patch && wc -l .signum/combined.patch || echo "WARNING: combined.patch missing"
@@ -167,6 +212,38 @@ jq -r '"Attempts used: " + (.totalAttempts | tostring) + "/" + (.maxAttempts | t
   .signum/execute_log.json
 ```
 
+### Step 2.4: Scope gate
+
+Use the Bash tool to verify no out-of-scope files were modified:
+
+```bash
+# Get changed files from patch
+CHANGED=$(git diff --name-only)
+IN_SCOPE=$(jq -r '.inScope[]' .signum/contract.json)
+ALLOW_NEW=$(jq -r '.allowNewFilesUnder // [] | .[]' .signum/contract.json)
+
+VIOLATIONS=""
+for file in $CHANGED; do
+  match=0
+  for pattern in $IN_SCOPE $ALLOW_NEW; do
+    case "$file" in
+      ${pattern}*) match=1; break ;;
+    esac
+  done
+  [ $match -eq 0 ] && VIOLATIONS="$VIOLATIONS\n  $file"
+done
+
+if [ -n "$VIOLATIONS" ]; then
+  echo "SCOPE VIOLATION: files outside inScope modified:$VIOLATIONS"
+  echo "Pipeline stopped. Fix scope in contract or revert changes."
+  exit 1
+else
+  echo "Scope check: PASS (all changed files within inScope)"
+fi
+```
+
+If scope violation, **STOP**. Do not proceed to Phase 3.
+
 ---
 
 ## Phase 3: AUDIT
@@ -175,7 +252,7 @@ jq -r '"Attempts used: " + (.totalAttempts | tostring) + "/" + (.maxAttempts | t
 
 ### Step 3.1: Mechanic (bash, zero LLM)
 
-Run full project checks. Use the Bash tool:
+Run full project checks and compare with baseline. Use the Bash tool:
 
 ```bash
 # Lint
@@ -207,7 +284,12 @@ else
   TEST_OUT="no test runner found, skipped"; TEST_EXIT=0
 fi
 
-# Write mechanic report
+# Read baseline
+BL_LINT=$(jq -r '.lint' .signum/baseline.json)
+BL_TYPE=$(jq -r '.typecheck' .signum/baseline.json)
+BL_TEST=$(jq -r '.tests' .signum/baseline.json)
+
+# Write mechanic report with regression detection
 jq -n \
   --arg lint_status "$([ $LINT_EXIT -eq 0 ] && echo pass || echo fail)" \
   --argjson lint_exit "$LINT_EXIT" \
@@ -215,17 +297,54 @@ jq -n \
   --argjson type_exit "$TYPE_EXIT" \
   --arg test_status "$([ $TEST_EXIT -eq 0 ] && echo pass || echo fail)" \
   --argjson test_exit "$TEST_EXIT" \
+  --argjson bl_lint "$BL_LINT" \
+  --argjson bl_type "$BL_TYPE" \
+  --argjson bl_test "$BL_TEST" \
   '{
-    lint:      { status: $lint_status,  exitCode: $lint_exit },
-    typecheck: { status: $type_status,  exitCode: $type_exit },
-    tests:     { status: $test_status,  exitCode: $test_exit },
-    baselineComparison: "checked"
+    lint:      { status: $lint_status, exitCode: $lint_exit, baseline: $bl_lint,
+                 regression: (if $bl_lint == 0 and $lint_exit != 0 then true else false end) },
+    typecheck: { status: $type_status, exitCode: $type_exit, baseline: $bl_type,
+                 regression: (if $bl_type == 0 and $type_exit != 0 then true else false end) },
+    tests:     { status: $test_status, exitCode: $test_exit, baseline: $bl_test,
+                 regression: (if $bl_test == 0 and $test_exit != 0 then true else false end) },
+    hasRegressions: (if ($bl_lint == 0 and $lint_exit != 0) or
+                        ($bl_type == 0 and $type_exit != 0) or
+                        ($bl_test == 0 and $test_exit != 0) then true else false end)
   }' > .signum/mechanic_report.json
 
-echo "Mechanic done. Lint=$LINT_EXIT Typecheck=$TYPE_EXIT Tests=$TEST_EXIT"
+echo "Mechanic done. Lint=$LINT_EXIT(bl:$BL_LINT) Typecheck=$TYPE_EXIT(bl:$BL_TYPE) Tests=$TEST_EXIT(bl:$BL_TEST)"
 ```
 
-If any check fails, continue to reviews — mechanic failure influences the final decision but does not block the audit.
+If any check has a NEW regression, continue to reviews — mechanic regression influences the final decision but does not block the audit.
+
+### Step 3.1.5: Holdout validation
+
+If contract has `holdoutScenarios`, run them now (Engineer never saw these):
+
+```bash
+HOLDOUTS=$(jq -r '.holdoutScenarios // [] | length' .signum/contract.json)
+if [ "$HOLDOUTS" -gt 0 ]; then
+  PASS=0; FAIL=0
+  for i in $(seq 0 $((HOLDOUTS - 1))); do
+    CMD=$(jq -r ".holdoutScenarios[$i].verify.value" .signum/contract.json)
+    DESC=$(jq -r ".holdoutScenarios[$i].description" .signum/contract.json)
+    if eval "$CMD" > /dev/null 2>&1; then
+      PASS=$((PASS + 1))
+    else
+      FAIL=$((FAIL + 1))
+      echo "HOLDOUT FAIL: $DESC"
+    fi
+  done
+  jq -n --argjson pass "$PASS" --argjson fail "$FAIL" \
+    '{ total: ($pass + $fail), passed: $pass, failed: $fail }' > .signum/holdout_report.json
+  echo "Holdout: $PASS passed, $FAIL failed"
+else
+  echo '{"total":0,"passed":0,"failed":0}' > .signum/holdout_report.json
+  echo "No holdout scenarios"
+fi
+```
+
+If any holdout fails, continue to reviews but synthesizer treats it as regression signal.
 
 ### Step 3.2: Reviewer-Claude (agent)
 
@@ -244,7 +363,7 @@ test -f .signum/reviews/claude.json && jq -e '.verdict' .signum/reviews/claude.j
   && echo "claude review OK" || echo "WARNING: claude.json missing or invalid"
 ```
 
-### Step 3.3: Reviewer-Codex (CLI)
+### Step 3.3: Reviewer-Codex (CLI, security-focused)
 
 Use the Bash tool to check availability:
 
@@ -254,17 +373,16 @@ which codex > /dev/null 2>&1 && echo "AVAILABLE" || echo "UNAVAILABLE"
 
 **If AVAILABLE:**
 
-Build the review prompt by substituting template variables:
+Build the security-focused review prompt:
 
 ```bash
-CONTRACT=$(cat .signum/contract.json)
-DIFF=$(cat .signum/combined.patch)
-MECHANIC=$(cat .signum/mechanic_report.json)
-
-sed -e "s|{contract_json}|$CONTRACT|g" \
-    -e "s|{diff}|$DIFF|g" \
-    -e "s|{mechanic_report}|$MECHANIC|g" \
-    lib/prompts/review-template.md > .signum/review_prompt_codex.txt
+python3 -c "
+import json, sys
+goal = json.load(open('.signum/contract.json'))['goal']
+diff = open('.signum/combined.patch').read()
+tmpl = open('lib/prompts/review-template-security.md').read()
+print(tmpl.replace('{goal}', goal).replace('{diff}', diff))
+" > .signum/review_prompt_codex.txt
 ```
 
 Run codex and attempt 3-level parsing:
@@ -288,9 +406,9 @@ if jq -e '.verdict' .signum/reviews/codex_raw.txt > /dev/null 2>&1; then
 # Level 2: extract between markers
 elif grep -q '###SIGNUM_REVIEW_START###' .signum/reviews/codex_raw.txt; then
   sed -n '/###SIGNUM_REVIEW_START###/,/###SIGNUM_REVIEW_END###/p' .signum/reviews/codex_raw.txt \
-    | grep -v '###SIGNUM_REVIEW' > /tmp/codex_extracted.json
-  if jq -e '.verdict' /tmp/codex_extracted.json > /dev/null 2>&1; then
-    cp /tmp/codex_extracted.json .signum/reviews/codex.json
+    | grep -v '###SIGNUM_REVIEW' > .signum/codex_extracted.json
+  if jq -e '.verdict' .signum/codex_extracted.json > /dev/null 2>&1; then
+    cp .signum/codex_extracted.json .signum/reviews/codex.json
     echo "codex: parsed via markers"
   else
     RAW=$(cat .signum/reviews/codex_raw.txt | head -c 2000)
@@ -317,7 +435,7 @@ echo '{"verdict":"UNAVAILABLE","findings":[],"summary":"Codex CLI not installed"
   > .signum/reviews/codex.json
 ```
 
-### Step 3.4: Reviewer-Gemini (CLI)
+### Step 3.4: Reviewer-Gemini (CLI, performance-focused)
 
 Use the Bash tool to check availability:
 
@@ -327,17 +445,16 @@ which gemini > /dev/null 2>&1 && echo "AVAILABLE" || echo "UNAVAILABLE"
 
 **If AVAILABLE:**
 
-Build the prompt (same template, separate file):
+Build the performance-focused review prompt:
 
 ```bash
-CONTRACT=$(cat .signum/contract.json)
-DIFF=$(cat .signum/combined.patch)
-MECHANIC=$(cat .signum/mechanic_report.json)
-
-sed -e "s|{contract_json}|$CONTRACT|g" \
-    -e "s|{diff}|$DIFF|g" \
-    -e "s|{mechanic_report}|$MECHANIC|g" \
-    lib/prompts/review-template.md > .signum/review_prompt_gemini.txt
+python3 -c "
+import json, sys
+goal = json.load(open('.signum/contract.json'))['goal']
+diff = open('.signum/combined.patch').read()
+tmpl = open('lib/prompts/review-template-performance.md').read()
+print(tmpl.replace('{goal}', goal).replace('{diff}', diff))
+" > .signum/review_prompt_gemini.txt
 ```
 
 Run gemini with same 3-level parsing:
@@ -358,9 +475,9 @@ if jq -e '.verdict' .signum/reviews/gemini_raw.txt > /dev/null 2>&1; then
 
 elif grep -q '###SIGNUM_REVIEW_START###' .signum/reviews/gemini_raw.txt; then
   sed -n '/###SIGNUM_REVIEW_START###/,/###SIGNUM_REVIEW_END###/p' .signum/reviews/gemini_raw.txt \
-    | grep -v '###SIGNUM_REVIEW' > /tmp/gemini_extracted.json
-  if jq -e '.verdict' /tmp/gemini_extracted.json > /dev/null 2>&1; then
-    cp /tmp/gemini_extracted.json .signum/reviews/gemini.json
+    | grep -v '###SIGNUM_REVIEW' > .signum/gemini_extracted.json
+  if jq -e '.verdict' .signum/gemini_extracted.json > /dev/null 2>&1; then
+    cp .signum/gemini_extracted.json .signum/reviews/gemini.json
     echo "gemini: parsed via markers"
   else
     RAW=$(cat .signum/reviews/gemini_raw.txt | head -c 2000)
@@ -392,8 +509,10 @@ Use the Agent tool to launch the "synthesizer" agent with this prompt:
 
 ```
 Read .signum/mechanic_report.json, .signum/reviews/claude.json,
-.signum/reviews/codex.json, and .signum/reviews/gemini.json.
-Apply deterministic synthesis rules and write .signum/audit_summary.json.
+.signum/reviews/codex.json, .signum/reviews/gemini.json,
+.signum/holdout_report.json, and .signum/execute_log.json.
+Apply deterministic synthesis rules, compute confidence scores,
+and write .signum/audit_summary.json.
 ```
 
 After it finishes, read and display the audit summary:
@@ -402,12 +521,15 @@ After it finishes, read and display the audit summary:
 test -f .signum/audit_summary.json || { echo "ERROR: audit_summary.json not found"; exit 1; }
 
 jq -r '"=== AUDIT SUMMARY ===",
-       "Mechanic: " + .mechanic,
+       "Mechanic: " + (.mechanic // "unknown"),
+       "Regressions: " + (if .mechanic == "regression" then "YES" else "none" end),
        "Claude verdict: " + .reviews.claude.verdict,
        "Codex verdict:  " + .reviews.codex.verdict,
        "Gemini verdict: " + .reviews.gemini.verdict,
        "Available reviews: " + (.availableReviews | tostring) + "/3",
+       "Holdout: " + ((.holdout.passed // 0) | tostring) + "/" + ((.holdout.total // 0) | tostring) + " passed",
        "Consensus: " + .consensus,
+       "Confidence: " + ((.confidence.overall // 0) | tostring) + "%",
        "DECISION: " + .decision,
        "Reasoning: " + .reasoning' \
   .signum/audit_summary.json
@@ -424,7 +546,15 @@ jq -r '"=== AUDIT SUMMARY ===",
 Use the Bash tool:
 
 ```bash
-sha256sum .signum/contract.json .signum/combined.patch \
+if command -v sha256sum >/dev/null 2>&1; then
+  HASH_CMD="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+  HASH_CMD="shasum -a 256"
+else
+  echo "ERROR: no sha256 tool found"; exit 1
+fi
+
+$HASH_CMD .signum/contract.json .signum/combined.patch \
           .signum/mechanic_report.json .signum/audit_summary.json 2>/dev/null \
   | awk '{print $2, $1}' | sort
 ```
@@ -439,21 +569,32 @@ GOAL=$(jq -r '.goal' .signum/contract.json)
 RISK=$(jq -r '.riskLevel' .signum/contract.json)
 ATTEMPTS=$(jq -r '.totalAttempts' .signum/execute_log.json 2>/dev/null || echo "unknown")
 MECHANIC=$(jq -r '.mechanic' .signum/audit_summary.json)
+CONFIDENCE=$(jq -r '.confidence.overall // 0' .signum/audit_summary.json)
 RUN_DATE=$(date +%Y-%m-%d)
 RUN_RANDOM=$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 6)
 RUN_ID="signum-${RUN_DATE}-${RUN_RANDOM}"
 
+# Cross-platform sha256
+if command -v sha256sum >/dev/null 2>&1; then
+  HASH_CMD="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+  HASH_CMD="shasum -a 256"
+else
+  echo "ERROR: no sha256 tool found"; exit 1
+fi
+
 # Compute individual checksums
-sum_contract=$(sha256sum .signum/contract.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
-sum_patch=$(sha256sum .signum/combined.patch 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
-sum_mechanic=$(sha256sum .signum/mechanic_report.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
-sum_audit=$(sha256sum .signum/audit_summary.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
+sum_contract=$($HASH_CMD .signum/contract.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
+sum_patch=$($HASH_CMD .signum/combined.patch 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
+sum_mechanic=$($HASH_CMD .signum/mechanic_report.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
+sum_audit=$($HASH_CMD .signum/audit_summary.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
 
 jq -n \
-  --arg schema "2.0" \
+  --arg schema "3.0" \
   --arg runId "$RUN_ID" \
   --arg decision "$DECISION" \
-  --arg summary "Goal: $GOAL | Risk: $RISK | Attempts: $ATTEMPTS | Mechanic: $MECHANIC | Decision: $DECISION" \
+  --arg summary "Goal: $GOAL | Risk: $RISK | Attempts: $ATTEMPTS | Mechanic: $MECHANIC | Confidence: ${CONFIDENCE}% | Decision: $DECISION" \
+  --argjson confidence "$CONFIDENCE" \
   --arg sum_contract "$sum_contract" \
   --arg sum_patch "$sum_patch" \
   --arg sum_mechanic "$sum_mechanic" \
@@ -479,6 +620,7 @@ jq -n \
       "mechanic_report.json": $sum_mechanic,
       "audit_summary.json":   $sum_audit
     },
+    confidence: { overall: $confidence },
     summary: $summary,
     executeLog: "execute_log.json"
   }' > .signum/proofpack.json
@@ -498,15 +640,16 @@ Use the Bash tool to list all produced artifacts:
 echo "=== Artifacts in .signum/ ==="
 ls -1 .signum/ .signum/reviews/ 2>/dev/null
 echo ""
-echo "Decision: $(jq -r .decision .signum/proofpack.json)"
-echo "Run ID:   $(jq -r .runId   .signum/proofpack.json)"
+echo "Decision:   $(jq -r .decision .signum/proofpack.json)"
+echo "Confidence: $(jq -r '.confidence.overall' .signum/proofpack.json)%"
+echo "Run ID:     $(jq -r .runId   .signum/proofpack.json)"
 ```
 
 Then display the appropriate next steps based on the decision:
 
 - **AUTO_OK**: "Changes are verified. Review `.signum/combined.patch` and commit when ready."
 - **AUTO_BLOCK**: "Issues found. Review `.signum/audit_summary.json` and fix before committing."
-- **HUMAN_REVIEW**: "Manual review recommended. Check `.signum/audit_summary.json` for details."
+- **HUMAN_REVIEW**: "Audit inconclusive. Review `.signum/audit_summary.json`, then either: (1) refine acceptance criteria and re-run `/signum`, or (2) manually verify the flagged findings."
 
 ---
 
