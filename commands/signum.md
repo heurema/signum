@@ -163,22 +163,29 @@ else
   BL_TYPE_EXIT=0
 fi
 
-# Tests
+# Tests — capture per-test names for regression tracking
 if [ -f "pyproject.toml" ] && grep -q "pytest" pyproject.toml 2>/dev/null; then
-  BL_TEST_EXIT=$(pytest >/dev/null 2>&1; echo $?)
+  BL_TEST_RAW=$(pytest --tb=no -q 2>&1)
+  BL_TEST_EXIT=$?
+  BL_TEST_FAILING=$(echo "$BL_TEST_RAW" | grep -E '^FAILED ' | sed 's/^FAILED //' | sed 's/ - .*//' | jq -R . | jq -s .)
+  [ -z "$BL_TEST_FAILING" ] && BL_TEST_FAILING='[]'
 elif [ -f "package.json" ] && grep -q '"test"' package.json 2>/dev/null; then
   BL_TEST_EXIT=$(npm test >/dev/null 2>&1; echo $?)
+  BL_TEST_FAILING='[]'
 elif [ -f "Cargo.toml" ]; then
   BL_TEST_EXIT=$(cargo test >/dev/null 2>&1; echo $?)
+  BL_TEST_FAILING='[]'
 else
   BL_TEST_EXIT=0
+  BL_TEST_FAILING='[]'
 fi
 
 jq -n \
   --argjson lint "$BL_LINT_EXIT" \
   --argjson type "$BL_TYPE_EXIT" \
   --argjson test "$BL_TEST_EXIT" \
-  '{ lint: $lint, typecheck: $type, tests: $test }' > .signum/baseline.json
+  --argjson failing "$BL_TEST_FAILING" \
+  '{ lint: $lint, typecheck: $type, tests: { exit_code: $test, failing: $failing } }' > .signum/baseline.json
 
 echo "Baseline captured: lint=$BL_LINT_EXIT type=$BL_TYPE_EXIT test=$BL_TEST_EXIT"
 ```
@@ -292,21 +299,32 @@ else
   TYPE_OUT="no typecheck found, skipped"; TYPE_EXIT=0
 fi
 
-# Tests
+# Tests — capture per-test names for regression detection
 if [ -f "pyproject.toml" ] && grep -q "pytest" pyproject.toml 2>/dev/null; then
-  TEST_OUT=$(pytest 2>&1); TEST_EXIT=$?
+  TEST_OUT=$(pytest --tb=short -q 2>&1); TEST_EXIT=$?
+  TEST_FAILING=$(echo "$TEST_OUT" | grep -E '^FAILED ' | sed 's/^FAILED //' | sed 's/ - .*//' | jq -R . | jq -s .)
+  [ -z "$TEST_FAILING" ] && TEST_FAILING='[]'
+  NEW_FAILURES=$(jq -n --argjson curr "$TEST_FAILING" --argjson base "$BL_TEST_FAILING" \
+    '[$curr[] | select(. as $t | $base | index($t) | not)]')
 elif [ -f "package.json" ] && grep -q '"test"' package.json 2>/dev/null; then
   TEST_OUT=$(npm test 2>&1); TEST_EXIT=$?
+  TEST_FAILING='[]'
+  NEW_FAILURES='[]'
 elif [ -f "Cargo.toml" ]; then
   TEST_OUT=$(cargo test 2>&1); TEST_EXIT=$?
+  TEST_FAILING='[]'
+  NEW_FAILURES='[]'
 else
   TEST_OUT="no test runner found, skipped"; TEST_EXIT=0
+  TEST_FAILING='[]'
+  NEW_FAILURES='[]'
 fi
 
 # Read baseline
 BL_LINT=$(jq -r '.lint' .signum/baseline.json)
 BL_TYPE=$(jq -r '.typecheck' .signum/baseline.json)
-BL_TEST=$(jq -r '.tests' .signum/baseline.json)
+BL_TEST=$(jq -r '.tests.exit_code // .tests' .signum/baseline.json)
+BL_TEST_FAILING=$(jq -c '.tests.failing // []' .signum/baseline.json)
 
 # Write mechanic report with regression detection
 jq -n \
@@ -319,16 +337,21 @@ jq -n \
   --argjson bl_lint "$BL_LINT" \
   --argjson bl_type "$BL_TYPE" \
   --argjson bl_test "$BL_TEST" \
+  --argjson new_failures "$NEW_FAILURES" \
+  --argjson test_failing "$TEST_FAILING" \
   '{
     lint:      { status: $lint_status, exitCode: $lint_exit, baseline: $bl_lint,
                  regression: (if $bl_lint == 0 and $lint_exit != 0 then true else false end) },
     typecheck: { status: $type_status, exitCode: $type_exit, baseline: $bl_type,
                  regression: (if $bl_type == 0 and $type_exit != 0 then true else false end) },
     tests:     { status: $test_status, exitCode: $test_exit, baseline: $bl_test,
-                 regression: (if $bl_test == 0 and $test_exit != 0 then true else false end) },
-    hasRegressions: (if ($bl_lint == 0 and $lint_exit != 0) or
-                        ($bl_type == 0 and $type_exit != 0) or
-                        ($bl_test == 0 and $test_exit != 0) then true else false end)
+                 failing: $test_failing, newFailures: $new_failures,
+                 regression: (if ($new_failures | length) > 0 then true
+                              elif $bl_test == 0 and $test_exit != 0 then true
+                              else false end) },
+    hasRegressions: (if ($new_failures | length) > 0 or
+                        ($bl_lint == 0 and $lint_exit != 0) or
+                        ($bl_type == 0 and $type_exit != 0) then true else false end)
   }' > .signum/mechanic_report.json
 
 echo "Mechanic done. Lint=$LINT_EXIT(bl:$BL_LINT) Typecheck=$TYPE_EXIT(bl:$BL_TYPE) Tests=$TEST_EXIT(bl:$BL_TEST)"
