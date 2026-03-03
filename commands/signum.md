@@ -367,6 +367,39 @@ print(f'contract-engineer.json written ({ac_count} ACs, holdouts removed)')
 "
 ```
 
+After writing `contract-engineer.json`, validate holdout count against risk level:
+
+```bash
+RISK=$(jq -r '.riskLevel' .signum/contract.json)
+HOLDOUT_COUNT=$(jq '(.holdoutScenarios // []) | length' .signum/contract.json)
+
+# Minimum holdout requirements by risk level
+MIN_HOLDOUTS=0
+[ "$RISK" = "medium" ] && MIN_HOLDOUTS=2
+[ "$RISK" = "high" ] && MIN_HOLDOUTS=5
+
+if [ "$HOLDOUT_COUNT" -lt "$MIN_HOLDOUTS" ]; then
+  echo "HOLDOUT GATE: $RISK risk requires at least $MIN_HOLDOUTS holdout scenarios, got $HOLDOUT_COUNT."
+  echo "Re-running Contractor to generate sufficient holdout scenarios..."
+  echo "HOLDOUT_INSUFFICIENT"
+fi
+```
+
+If output contains `HOLDOUT_INSUFFICIENT`, use the Agent tool to re-launch the "contractor" agent with this additional instruction appended to the original request:
+
+```
+ADDITIONAL REQUIREMENT: The previous contract had insufficient holdout scenarios for $RISK risk level.
+Risk level $RISK requires at least $MIN_HOLDOUTS holdout scenarios.
+Current count: $HOLDOUT_COUNT.
+Generate exactly the required minimum number of high-quality holdout scenarios:
+- Each must be a negative test, error path, or boundary condition
+- Each must NOT be derivable from the visible acceptance criteria
+- Each must use a verify command (exit code or pattern), not "manual"
+Keep all other contract fields the same.
+```
+
+After contractor re-runs, repeat the holdout count check. If count is still insufficient after one retry, continue with a warning (do not block indefinitely).
+
 ---
 
 ## Phase 2: EXECUTE
