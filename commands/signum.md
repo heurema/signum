@@ -299,6 +299,12 @@ else
   TYPE_OUT="no typecheck found, skipped"; TYPE_EXIT=0
 fi
 
+# Read baseline
+BL_LINT=$(jq -r '.lint' .signum/baseline.json)
+BL_TYPE=$(jq -r '.typecheck' .signum/baseline.json)
+BL_TEST=$(jq -r '.tests.exit_code // .tests' .signum/baseline.json)
+BL_TEST_FAILING=$(jq -c '.tests.failing // []' .signum/baseline.json)
+
 # Tests — capture per-test names for regression detection
 if [ -f "pyproject.toml" ] && grep -q "pytest" pyproject.toml 2>/dev/null; then
   TEST_OUT=$(pytest --tb=short -q 2>&1); TEST_EXIT=$?
@@ -319,12 +325,6 @@ else
   TEST_FAILING='[]'
   NEW_FAILURES='[]'
 fi
-
-# Read baseline
-BL_LINT=$(jq -r '.lint' .signum/baseline.json)
-BL_TYPE=$(jq -r '.typecheck' .signum/baseline.json)
-BL_TEST=$(jq -r '.tests.exit_code // .tests' .signum/baseline.json)
-BL_TEST_FAILING=$(jq -c '.tests.failing // []' .signum/baseline.json)
 
 # Write mechanic report with regression detection
 jq -n \
