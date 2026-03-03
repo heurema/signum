@@ -435,25 +435,66 @@ print(tmpl.replace('{goal}', goal).replace('{diff}', diff))
 " > .signum/review_prompt_codex.txt
 ```
 
-Run codex and attempt 3-level parsing:
+Save the availability result as CODEX_AVAILABLE. Codex will be launched in parallel in Step 3.4.5.
+
+### Step 3.4: Reviewer-Gemini (CLI, performance-focused)
+
+Use the Bash tool to check availability:
 
 ```bash
-# Run codex (modern CLI: codex exec --ephemeral)
+which gemini > /dev/null 2>&1 && echo "AVAILABLE" || echo "UNAVAILABLE"
+```
+
+**If AVAILABLE:**
+
+Build the performance-focused review prompt:
+
+```bash
+python3 -c "
+import json, sys
+goal = json.load(open('.signum/contract.json'))['goal']
+diff = open('.signum/combined.patch').read()
+tmpl = open('lib/prompts/review-template-performance.md').read()
+print(tmpl.replace('{goal}', goal).replace('{diff}', diff))
+" > .signum/review_prompt_gemini.txt
+```
+
+Save the availability result as GEMINI_AVAILABLE. Gemini will be launched in parallel in Step 3.4.5.
+
+### Step 3.4.5: Launch Codex and Gemini in parallel
+
+If CODEX_AVAILABLE, launch codex using the Bash tool with **`run_in_background: true`**:
+
+```bash
 PROMPT=$(cat .signum/review_prompt_codex.txt)
 OUT=$(mktemp)
 codex exec --ephemeral -C "$PWD" -p fast --output-last-message "$OUT" "$PROMPT" \
-  > .signum/reviews/codex_stdout.txt 2>&1 &
-CODEX_PID=$!
-( sleep 180; kill $CODEX_PID 2>/dev/null ) &
-TIMER_PID=$!
-wait $CODEX_PID 2>/dev/null
-CODEX_EXIT=$?
-kill $TIMER_PID 2>/dev/null; wait $TIMER_PID 2>/dev/null
-# Copy last-message output (clean JSON) to raw file for subsequent parsing
+  > .signum/reviews/codex_stdout.txt 2>&1
 cp "$OUT" .signum/reviews/codex_raw.txt 2>/dev/null || \
   cp .signum/reviews/codex_stdout.txt .signum/reviews/codex_raw.txt
 rm -f "$OUT"
+echo "CODEX_DONE"
+```
 
+Save the resulting background task ID as CODEX_TASK_ID. Do NOT wait for it.
+
+If GEMINI_AVAILABLE, immediately (without waiting for codex) launch gemini using the Bash tool with **`run_in_background: true`**:
+
+```bash
+PROMPT=$(cat .signum/review_prompt_gemini.txt)
+gemini -p "$PROMPT" > .signum/reviews/gemini_raw.txt 2>&1
+echo "GEMINI_DONE"
+```
+
+Save the resulting background task ID as GEMINI_TASK_ID. Do NOT wait for it.
+
+Now collect results. Use the TaskOutput tool with `block: true` to wait for CODEX_TASK_ID (if codex was launched). Then use the TaskOutput tool with `block: true` to wait for GEMINI_TASK_ID (if gemini was launched).
+
+After both complete (or if they were never launched), parse codex output:
+
+If CODEX_AVAILABLE: attempt 3-level parsing of `.signum/reviews/codex_raw.txt`:
+
+```bash
 # Level 1: valid JSON directly
 if jq -e '.verdict' .signum/reviews/codex_raw.txt > /dev/null 2>&1; then
   cp .signum/reviews/codex_raw.txt .signum/reviews/codex.json
@@ -484,47 +525,18 @@ else
 fi
 ```
 
-**If UNAVAILABLE:**
+If CODEX_UNAVAILABLE:
 
 ```bash
 echo '{"verdict":"UNAVAILABLE","findings":[],"summary":"Codex CLI not installed","available":false}' \
   > .signum/reviews/codex.json
 ```
 
-### Step 3.4: Reviewer-Gemini (CLI, performance-focused)
+Parse gemini output:
 
-Use the Bash tool to check availability:
-
-```bash
-which gemini > /dev/null 2>&1 && echo "AVAILABLE" || echo "UNAVAILABLE"
-```
-
-**If AVAILABLE:**
-
-Build the performance-focused review prompt:
+If GEMINI_AVAILABLE: attempt 3-level parsing of `.signum/reviews/gemini_raw.txt`:
 
 ```bash
-python3 -c "
-import json, sys
-goal = json.load(open('.signum/contract.json'))['goal']
-diff = open('.signum/combined.patch').read()
-tmpl = open('lib/prompts/review-template-performance.md').read()
-print(tmpl.replace('{goal}', goal).replace('{diff}', diff))
-" > .signum/review_prompt_gemini.txt
-```
-
-Run gemini with same 3-level parsing:
-
-```bash
-PROMPT=$(cat .signum/review_prompt_gemini.txt)
-gemini -p "$PROMPT" > .signum/reviews/gemini_raw.txt 2>&1 &
-GEMINI_PID=$!
-( sleep 180; kill $GEMINI_PID 2>/dev/null ) &
-TIMER_PID=$!
-wait $GEMINI_PID 2>/dev/null
-GEMINI_EXIT=$?
-kill $TIMER_PID 2>/dev/null; wait $TIMER_PID 2>/dev/null
-
 if jq -e '.verdict' .signum/reviews/gemini_raw.txt > /dev/null 2>&1; then
   cp .signum/reviews/gemini_raw.txt .signum/reviews/gemini.json
   echo "gemini: parsed as direct JSON"
@@ -552,7 +564,7 @@ else
 fi
 ```
 
-**If UNAVAILABLE:**
+If GEMINI_UNAVAILABLE:
 
 ```bash
 echo '{"verdict":"UNAVAILABLE","findings":[],"summary":"Gemini CLI not installed","available":false}' \
