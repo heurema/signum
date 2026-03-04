@@ -1120,7 +1120,7 @@ CONTRACT_FULL_SHA256=$(hash_file .signum/contract.json)
 build_envelope() {
   local path="$1"
   if [ ! -f "$path" ]; then
-    echo '{"content":null,"sha256":"missing","sizeBytes":0,"status":"error","errorMessage":"file not found"}'
+    echo '{"content":null,"sha256":"missing","sizeBytes":0,"status":"error","omitReason":"file not found"}'
     return
   fi
   local sha
@@ -1130,7 +1130,7 @@ build_envelope() {
   if [ "$size" -le 102400 ]; then
     local content
     content=$(jq -Rs . < "$path")
-    printf '{"content":%s,"sha256":"%s","sizeBytes":%s,"status":"embedded"}' \
+    printf '{"content":%s,"sha256":"%s","sizeBytes":%s,"status":"present"}' \
       "$content" "$sha" "$size"
   else
     printf '{"content":null,"sha256":"%s","sizeBytes":%s,"status":"omitted","omitReason":"size exceeds 100 KiB"}' \
@@ -1142,7 +1142,7 @@ build_envelope() {
 CONTRACT_SIZE=$(file_size "$REDACTED_CONTRACT")
 if [ "$CONTRACT_SIZE" -le 102400 ]; then
   CONTRACT_CONTENT=$(jq -Rs . < "$REDACTED_CONTRACT")
-  CONTRACT_ENV=$(printf '{"content":%s,"sha256":"%s","fullSha256":"%s","sizeBytes":%s,"status":"embedded"}' \
+  CONTRACT_ENV=$(printf '{"content":%s,"sha256":"%s","fullSha256":"%s","sizeBytes":%s,"status":"present"}' \
     "$CONTRACT_CONTENT" "$CONTRACT_SHA256" "$CONTRACT_FULL_SHA256" "$CONTRACT_SIZE")
 else
   CONTRACT_ENV=$(printf '{"content":null,"sha256":"%s","fullSha256":"%s","sizeBytes":%s,"status":"omitted","omitReason":"size exceeds 100 KiB"}' \
