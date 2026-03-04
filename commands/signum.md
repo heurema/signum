@@ -1059,13 +1059,14 @@ jq -r '"=== AUDIT SUMMARY ===",
 
 ## Phase 4: PACK
 
-**Goal:** Bundle all artifacts into a verifiable proof package.
+**Goal:** Bundle all artifacts into a self-contained, verifiable proof package (schema v4.0) with embedded artifact contents.
 
-### Step 4.1: Compute checksums
+### Step 4.1: Collect metadata and build proofpack
 
 Use the Bash tool:
 
 ```bash
+# Cross-platform sha256 helper
 if command -v sha256sum >/dev/null 2>&1; then
   HASH_CMD="sha256sum"
 elif command -v shasum >/dev/null 2>&1; then
@@ -1074,91 +1075,161 @@ else
   echo "ERROR: no sha256 tool found"; exit 1
 fi
 
-$HASH_CMD .signum/contract.json .signum/combined.patch \
-          .signum/mechanic_report.json .signum/audit_summary.json 2>/dev/null \
-  | awk '{print $2, $1}' | sort
-```
+hash_file() {
+  local f="$1"
+  [ -f "$f" ] || { echo "missing"; return; }
+  $HASH_CMD "$f" | awk '{print $1}'
+}
 
-### Step 4.2: Assemble proofpack.json
+file_size() {
+  local f="$1"
+  [ -f "$f" ] || { echo "0"; return; }
+  wc -c < "$f" | tr -d ' '
+}
 
-Use the Bash tool to build the full proofpack:
-
-```bash
+# Metadata
 DECISION=$(jq -r '.decision' .signum/audit_summary.json)
 GOAL=$(jq -r '.goal' .signum/contract.json)
 RISK=$(jq -r '.riskLevel' .signum/contract.json)
 ATTEMPTS=$(jq -r '.totalAttempts' .signum/execute_log.json 2>/dev/null || echo "unknown")
 MECHANIC=$(jq -r '.mechanic' .signum/audit_summary.json)
 CONFIDENCE=$(jq -r '.confidence.overall // 0' .signum/audit_summary.json)
-RUN_DATE=$(date +%Y-%m-%d)
+RUN_DATE=$(date +%Y-%m-%dT%H:%M:%SZ)
 RUN_RANDOM=$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 6)
-RUN_ID="signum-${RUN_DATE}-${RUN_RANDOM}"
+RUN_ID="signum-$(date +%Y-%m-%d)-${RUN_RANDOM}"
 
-# Audit chain fields
+# Audit chain
 CONTRACT_HASH=$(grep 'contract_sha256:' .signum/contract-hash.txt 2>/dev/null | awk '{print $2}' || echo "unavailable")
 APPROVED_AT=$(grep 'approved_at:' .signum/contract-hash.txt 2>/dev/null | awk '{print $2}' || echo "unavailable")
 BASE_COMMIT=$(jq -r '.base_commit // "unavailable"' .signum/execution_context.json 2>/dev/null || echo "unavailable")
 
-# Cross-platform sha256
-if command -v sha256sum >/dev/null 2>&1; then
-  HASH_CMD="sha256sum"
-elif command -v shasum >/dev/null 2>&1; then
-  HASH_CMD="shasum -a 256"
+# Contract redaction: strip holdoutScenarios, save to temp file
+REDACTED_CONTRACT=$(mktemp /tmp/signum-contract-redacted.XXXXXX.json)
+python3 -c "
+import json, sys
+with open('.signum/contract.json') as f:
+    data = json.load(f)
+data.pop('holdoutScenarios', None)
+json.dump(data, sys.stdout)
+" > "$REDACTED_CONTRACT"
+
+CONTRACT_SHA256=$(hash_file "$REDACTED_CONTRACT")
+CONTRACT_FULL_SHA256=$(hash_file .signum/contract.json)
+
+# Envelope builder: embeds file content if <=102400 bytes, else omits
+build_envelope() {
+  local path="$1"
+  if [ ! -f "$path" ]; then
+    echo '{"content":null,"sha256":"missing","sizeBytes":0,"status":"error","errorMessage":"file not found"}'
+    return
+  fi
+  local sha
+  sha=$(hash_file "$path")
+  local size
+  size=$(file_size "$path")
+  if [ "$size" -le 102400 ]; then
+    local content
+    content=$(jq -Rs . < "$path")
+    printf '{"content":%s,"sha256":"%s","sizeBytes":%s,"status":"embedded"}' \
+      "$content" "$sha" "$size"
+  else
+    printf '{"content":null,"sha256":"%s","sizeBytes":%s,"status":"omitted","omitReason":"size exceeds 100 KiB"}' \
+      "$sha" "$size"
+  fi
+}
+
+# Contract envelope (special: has both sha256 of redacted and fullSha256 of original)
+CONTRACT_SIZE=$(file_size "$REDACTED_CONTRACT")
+if [ "$CONTRACT_SIZE" -le 102400 ]; then
+  CONTRACT_CONTENT=$(jq -Rs . < "$REDACTED_CONTRACT")
+  CONTRACT_ENV=$(printf '{"content":%s,"sha256":"%s","fullSha256":"%s","sizeBytes":%s,"status":"embedded"}' \
+    "$CONTRACT_CONTENT" "$CONTRACT_SHA256" "$CONTRACT_FULL_SHA256" "$CONTRACT_SIZE")
 else
-  echo "ERROR: no sha256 tool found"; exit 1
+  CONTRACT_ENV=$(printf '{"content":null,"sha256":"%s","fullSha256":"%s","sizeBytes":%s,"status":"omitted","omitReason":"size exceeds 100 KiB"}' \
+    "$CONTRACT_SHA256" "$CONTRACT_FULL_SHA256" "$CONTRACT_SIZE")
 fi
 
-# Compute individual checksums
-sum_contract=$($HASH_CMD .signum/contract.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
-sum_patch=$($HASH_CMD .signum/combined.patch 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
-sum_mechanic=$($HASH_CMD .signum/mechanic_report.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
-sum_audit=$($HASH_CMD .signum/audit_summary.json 2>/dev/null | awk '{print "sha256:" $1}' || echo "sha256:missing")
+# Diff embedding
+DIFF_ENV=$(build_envelope .signum/combined.patch)
 
+# Baseline envelope (optional artifact)
+BASELINE_ENV=$(build_envelope .signum/baseline.json)
+
+# Execute log envelope
+EXECUTE_ENV=$(build_envelope .signum/execute_log.json)
+
+# Mechanic and holdout envelopes
+MECHANIC_ENV=$(build_envelope .signum/mechanic_report.json)
+HOLDOUT_ENV=$(build_envelope .signum/holdout_report.json)
+
+# Audit summary envelope
+AUDIT_ENV=$(build_envelope .signum/audit_summary.json)
+
+# Dynamic reviews: enumerate .signum/reviews/*.json
+REVIEWS_JSON='{'
+first=1
+for review_file in .signum/reviews/*.json; do
+  [ -f "$review_file" ] || continue
+  provider=$(basename "$review_file" .json)
+  env_json=$(build_envelope "$review_file")
+  if [ "$first" -eq 1 ]; then
+    REVIEWS_JSON="${REVIEWS_JSON}\"${provider}\":${env_json}"
+    first=0
+  else
+    REVIEWS_JSON="${REVIEWS_JSON},\"${provider}\":${env_json}"
+  fi
+done
+REVIEWS_JSON="${REVIEWS_JSON}}"
+
+# Final assembly
 jq -n \
-  --arg schema "3.0" \
+  --arg schemaVersion "4.0" \
+  --arg signumVersion "4.0.0" \
+  --arg createdAt "$RUN_DATE" \
   --arg runId "$RUN_ID" \
   --arg decision "$DECISION" \
   --arg summary "Goal: $GOAL | Risk: $RISK | Attempts: $ATTEMPTS | Mechanic: $MECHANIC | Confidence: ${CONFIDENCE}% | Decision: $DECISION" \
   --argjson confidence "$CONFIDENCE" \
-  --arg sum_contract "$sum_contract" \
-  --arg sum_patch "$sum_patch" \
-  --arg sum_mechanic "$sum_mechanic" \
-  --arg sum_audit "$sum_audit" \
-  --arg contract_hash "$CONTRACT_HASH" \
-  --arg approved_at "$APPROVED_AT" \
-  --arg base_commit "$BASE_COMMIT" \
+  --arg contractHash "$CONTRACT_HASH" \
+  --arg approvedAt "$APPROVED_AT" \
+  --arg baseCommit "$BASE_COMMIT" \
+  --argjson contractEnv "$CONTRACT_ENV" \
+  --argjson diffEnv "$DIFF_ENV" \
+  --argjson baselineEnv "$BASELINE_ENV" \
+  --argjson executeEnv "$EXECUTE_ENV" \
+  --argjson mechanicEnv "$MECHANIC_ENV" \
+  --argjson holdoutEnv "$HOLDOUT_ENV" \
+  --argjson auditEnv "$AUDIT_ENV" \
+  --argjson reviewsEnv "$REVIEWS_JSON" \
   '{
-    schemaVersion: $schema,
+    schemaVersion: $schemaVersion,
+    signumVersion: $signumVersion,
+    createdAt: $createdAt,
     runId: $runId,
     decision: $decision,
-    contract: "contract.json",
-    diff: "combined.patch",
-    checks: {
-      mechanic: "mechanic_report.json",
-      reviews: {
-        claude: "reviews/claude.json",
-        codex:  "reviews/codex.json",
-        gemini: "reviews/gemini.json"
-      },
-      audit_summary: "audit_summary.json"
-    },
-    checksums: {
-      "contract.json":        $sum_contract,
-      "combined.patch":       $sum_patch,
-      "mechanic_report.json": $sum_mechanic,
-      "audit_summary.json":   $sum_audit
-    },
-    confidence: { overall: $confidence },
     summary: $summary,
-    executeLog: "execute_log.json",
+    confidence: { overall: $confidence },
     auditChain: {
-      contract_sha256: $contract_hash,
-      approved_at: $approved_at,
-      base_commit: $base_commit
+      contractSha256: $contractHash,
+      approvedAt: $approvedAt,
+      baseCommit: $baseCommit
+    },
+    contract: $contractEnv,
+    diff: $diffEnv,
+    baseline: $baselineEnv,
+    executeLog: $executeEnv,
+    checks: {
+      mechanic: $mechanicEnv,
+      holdout: $holdoutEnv,
+      reviews: $reviewsEnv,
+      auditSummary: $auditEnv
     }
   }' > .signum/proofpack.json
 
-echo "Proofpack written: $RUN_ID"
+# Cleanup temp files
+rm -f "$REDACTED_CONTRACT"
+
+echo "Proofpack written: $RUN_ID (schema v4.0)"
 ```
 
 ---
