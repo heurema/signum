@@ -1,40 +1,68 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["schemaVersion", "runId", "decision", "contract", "diff", "checks", "checksums", "summary"],
-  "properties": {
-    "schemaVersion": { "type": "string", "const": "3.0" },
-    "runId": { "type": "string", "pattern": "^signum-" },
-    "decision": { "type": "string", "enum": ["AUTO_OK", "AUTO_BLOCK", "HUMAN_REVIEW"] },
-    "contract": { "type": "string" },
-    "diff": { "type": "string" },
-    "checks": {
+  "required": ["schemaVersion", "signumVersion", "createdAt", "runId", "decision", "summary", "contract", "diff", "checks"],
+  "definitions": {
+    "envelope": {
       "type": "object",
-      "required": ["mechanic", "reviews", "audit_summary"],
+      "required": ["sha256", "sizeBytes", "status"],
       "properties": {
-        "mechanic": { "type": "string" },
-        "reviews": {
-          "type": "object",
-          "properties": {
-            "claude": { "type": "string" },
-            "codex": { "type": "string" },
-            "gemini": { "type": "string" }
-          }
-        },
-        "audit_summary": { "type": "string" }
+        "content": {},
+        "sha256": { "type": ["string", "null"] },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "status": { "type": "string", "enum": ["present", "omitted", "error"] },
+        "omitReason": { "type": "string" }
       }
     },
-    "checksums": {
-      "type": "object",
-      "additionalProperties": { "type": "string", "pattern": "^sha256:" }
-    },
+    "contractEnvelope": {
+      "allOf": [
+        { "$ref": "#/definitions/envelope" },
+        {
+          "type": "object",
+          "properties": {
+            "fullSha256": { "type": "string" }
+          }
+        }
+      ]
+    }
+  },
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "4.0" },
+    "signumVersion": { "type": "string" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "runId": { "type": "string", "pattern": "^signum-" },
+    "decision": { "type": "string", "enum": ["AUTO_OK", "AUTO_BLOCK", "HUMAN_REVIEW"] },
+    "summary": { "type": "string" },
     "confidence": {
       "type": "object",
       "properties": {
         "overall": { "type": "number", "minimum": 0, "maximum": 100 }
       }
     },
-    "summary": { "type": "string" },
-    "executeLog": { "type": "string" }
+    "auditChain": {
+      "type": "object",
+      "properties": {
+        "contractSha256": { "type": "string" },
+        "approvedAt": { "type": "string" },
+        "baseCommit": { "type": "string" }
+      }
+    },
+    "contract": { "$ref": "#/definitions/contractEnvelope" },
+    "diff": { "$ref": "#/definitions/envelope" },
+    "baseline": { "$ref": "#/definitions/envelope" },
+    "executeLog": { "$ref": "#/definitions/envelope" },
+    "checks": {
+      "type": "object",
+      "required": ["mechanic", "reviews", "auditSummary"],
+      "properties": {
+        "mechanic": { "$ref": "#/definitions/envelope" },
+        "holdout": { "$ref": "#/definitions/envelope" },
+        "reviews": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/envelope" }
+        },
+        "auditSummary": { "$ref": "#/definitions/envelope" }
+      }
+    }
   }
 }
