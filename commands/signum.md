@@ -37,12 +37,12 @@ Use the Bash tool to define the `_resolve_model` helper and resolve models for t
 ```bash
 _resolve_model() {
   local task="$1" provider="$2"
-  local config="$HOME/.claude/emporium-providers.local.md"
+  local config="${EMPORIUM_PROVIDERS_CONFIG:-$HOME/.claude/emporium-providers.local.md}"
   [ -f "$config" ] || return 0
   python3 -c "
 import sys, re, os
 
-config_path = os.path.expanduser('~/.claude/emporium-providers.local.md')
+config_path = os.environ.get('EMPORIUM_PROVIDERS_CONFIG', os.path.expanduser('~/.claude/emporium-providers.local.md'))
 try:
     with open(config_path) as f:
         text = f.read()
