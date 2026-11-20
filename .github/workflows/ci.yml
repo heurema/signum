@@ -18,14 +18,8 @@ jobs:
       - name: Checkout
         # pinned from actions/checkout@v4
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          fetch-depth: 0
 
-      - name: Tool versions
-        run: |
-          bash --version | head -1
-          python3 --version
-          jq --version
-
-      - name: Run deterministic tests
-        run: bash scripts/run-deterministic-tests.sh
+      - name: Run project tests
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: python3 -B -m unittest discover -s tests -v

@@ -1,0 +1,15 @@
+[workspace]
+resolver = "3"
+members = []
+
+[package]
+name = "signum-starter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+tokio = { version = "1", features = ["macros", "net", "rt"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

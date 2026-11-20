@@ -1,0 +1,12 @@
+{
+  "name": "signum-rust",
+  "version": "0.1.3",
+  "description": "Create an empty Cargo workspace, start a Rust CLI, backend or web project, or attach a project-owned Rust workflow to Signum contracts.",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Signum Rust",
+    "shortDescription": "Build and verify Rust projects under a scoped contract",
+    "developerName": "Heurema",
+    "category": "Productivity"
+  }
+}

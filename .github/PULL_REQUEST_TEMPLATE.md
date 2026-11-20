@@ -43,8 +43,8 @@ Describe the change in 2-5 bullets.
 Mark all that apply.
 
 - [ ] docs
-- [ ] deterministic core / `lib`
-- [ ] prompt / orchestration
+- [ ] deterministic core
+- [ ] project workflow
 - [ ] init / harness
 - [ ] schema / compatibility
 - [ ] release / marketplace wiring
@@ -73,11 +73,10 @@ Mark anything touched in this PR.
 - [ ] runtime behavior
 - [ ] docs-only
 - [ ] test-only
-- [ ] `commands/signum.md`
-- [ ] `commands/init.md`
-- [ ] `agents/*`
-- [ ] `lib/*`
-- [ ] `lib/schemas/*`
+- [ ] `plugins/signum/`
+- [ ] `plugins/signum-rust/`
+- [ ] `tools/`
+- [ ] `.agents/plugins/`
 - [ ] `.github/workflows/*`
 - [ ] none of the above
 
@@ -96,7 +95,7 @@ Docs / rationale:
 ## Validation / proof
 
 - [ ] not applicable yet (explain below)
-- [ ] targeted shell tests
+- [ ] targeted tests
 - [ ] full test run
 - [ ] eval / fixture run
 - [ ] doc walkthrough

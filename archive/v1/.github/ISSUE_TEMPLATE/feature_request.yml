@@ -1,0 +1,71 @@
+name: Feature request
+description: Propose a bounded improvement that fits current Signum scope
+title: "[Feature]: "
+labels:
+  - enhancement
+  - intake/needs-maintainer-decision
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please describe the intent before opening a non-trivial PR.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user, maintainer, or project problem should be solved?
+      placeholder: Describe the problem before describing code.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_outcome
+    attributes:
+      label: Expected outcome
+      description: What should be true after this is solved?
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_workaround
+    attributes:
+      label: Current workaround
+      description: How can users or maintainers handle this today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: insufficiency
+    attributes:
+      label: Why current behavior/options are insufficient
+      description: Explain why existing behavior, docs, configuration, or process is not enough.
+    validations:
+      required: true
+
+  - type: textarea
+    id: minimal_solution
+    attributes:
+      label: Minimal acceptable solution
+      description: What is the smallest useful change?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include no-code, docs-only, process, or configuration alternatives.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: willingness_to_pr
+    attributes:
+      label: Willingness to submit PR
+      options:
+        - I can submit a PR if maintainers accept the intent
+        - I can help test or review
+        - I am only reporting the request
+    validations:
+      required: true

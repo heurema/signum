@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Run one Rust verification lane from the Cargo workspace root."""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+
+KIND = "cli"
+SURFACE_TESTS = {"cli": "cli_contract", "backend": "http_contract", "web": "browser_contract"}
+WASM_TARGET = ["--target", "wasm32-unknown-unknown"]
+PASSED = re.compile(r"^test result: ok\.\s+(\d+) passed\b", re.MULTILINE)
+VERUS_SUMMARY = re.compile(r"^verification results::\s*(\d+) verified,\s*(\d+) errors?\s*$", re.MULTILINE)
+
+
+def arguments():
+    parser = argparse.ArgumentParser(description=__doc__)
+    lanes = parser.add_subparsers(dest="lane", required=True)
+    lanes.add_parser("fast", help="Check formatting, Clippy and workspace tests")
+    selected = lanes.add_parser("test", help="Run the native tests of a workspace package")
+    selected.add_argument("-p", "--package", required=True)
+    lanes.add_parser("build", help="Keep the assembled release artifacts outside the workspace")
+    properties = lanes.add_parser("property", help="Run the named property integration test")
+    properties.add_argument("--test", default="properties")
+    lanes.add_parser("surface", help="Run the integration test for the selected project kind")
+    mutants = lanes.add_parser("mutants", help="Check mutations in an explicit diff or Rust file")
+    scope = mutants.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--diff", type=Path)
+    scope.add_argument("--file", type=Path)
+    proof = lanes.add_parser("proof", help="Verify a Rust source file with Verus")
+    proof.add_argument("path", type=Path)
+    args = parser.parse_args()
+    if args.lane == "test" and not re.fullmatch(r"[A-Za-z0-9_-]+", args.package):
+        parser.error("--package requires one literal package name")
+    if args.lane == "property":
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.test):
+            parser.error("--test requires one literal integration test name")
+        cases = os.environ.get("PROPTEST_CASES", "256")
+        if not re.fullmatch(r"[0-9]{1,10}", cases) or not 0 < int(cases) <= 2**32 - 1:
+            parser.error("PROPTEST_CASES must be a positive 32-bit integer")
+    return args
+
+
+def run(command, *, cwd=None, capture=False):
+    result = subprocess.run(
+        command,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.STDOUT if capture else None,
+    )
+    if capture:
+        print(result.stdout, end="", flush=True)
+    if result.returncode:
+        raise SystemExit(result.returncode if result.returncode > 0 else 128 - result.returncode)
+    return result.stdout or ""
+
+
+def tests(command):
+    output = run(command, capture=True)
+    if not any(int(count) for count in PASSED.findall(output)):
+        raise ValueError("the test runner reported no passing tests")
+
+
+def rust_file(path, root):
+    resolved = path.resolve()
+    if not resolved.is_file() or resolved.suffix != ".rs" or root not in resolved.parents:
+        raise ValueError("expected an existing .rs file inside the Cargo workspace")
+    return resolved
+
+
+def mutation_scope(args, root):
+    if args.diff is not None:
+        diff = args.diff.resolve()
+        if not diff.is_file() or not diff.stat().st_size:
+            raise ValueError("expected a nonempty diff file")
+        return ["--in-diff", str(diff)]
+    exact = rust_file(args.file, root).relative_to(root).as_posix()
+    if any(char in exact for char in "*?[]{}\\"):
+        raise ValueError("the file path cannot contain glob characters")
+    if "/" in exact:
+        return ["--file", exact]
+    # cargo-mutants treats a glob without a slash as a basename match.
+    return ["--file", exact, "--exclude", f"?*/{exact}"]
+
+
+def check_mutants(scope, output):
+    receipt = output / "mutants.out" / "outcomes.json"
+    print(f"Mutation results: {receipt}", flush=True)
+    run(["cargo", "mutants", "--no-config", *scope, "--jobs", "1",
+         "--timeout", os.environ.get("SIGNUM_MUTANT_TIMEOUT", "60"),
+         "--cargo-arg=--locked", "--output", str(output)])
+    counts = json.loads(receipt.read_text(encoding="utf-8"))
+    if counts["caught"] <= 0 or counts["missed"] or counts["timeout"]:
+        raise ValueError("expected at least one caught mutation and zero missed or timed-out mutations")
+
+
+def check_proof(path, output):
+    verus = os.environ.get("VERUS") or "verus"
+    if "/" in verus:
+        verus = str(Path(verus).resolve())
+    result = run([verus, "--crate-type", "lib", str(path)], cwd=output, capture=True)
+    summaries = VERUS_SUMMARY.findall(result)
+    if not summaries or not any(int(verified) for verified, _ in summaries) or any(
+        int(errors) for _, errors in summaries
+    ):
+        raise ValueError("Verus did not report a positive verified count with zero errors")
+
+
+def execute(args, root, output):
+    if KIND == "web" and args.lane in {"fast", "surface"}:
+        os.environ.setdefault("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER", "wasm-bindgen-test-runner")
+    if args.lane == "fast":
+        run(["cargo", "fmt", "--all", "--", "--check"])
+        target = WASM_TARGET if KIND == "web" else []
+        run(["cargo", "clippy", "--workspace", "--all-targets", "--locked", *target, "--", "-D", "warnings"])
+        if KIND == "web":
+            tests(["cargo", "test", "--workspace", "--locked", *target, "--test=browser_contract"])
+        else:
+            tests(["cargo", "test", "--workspace", "--locked"])
+    elif args.lane == "test":
+        metadata = subprocess.check_output(
+            ["cargo", "metadata", "--no-deps", "--locked", "--format-version", "1"], text=True
+        )
+        if args.package not in {pkg["name"] for pkg in json.loads(metadata)["packages"]}:
+            raise ValueError(f"{args.package} is not a member of this workspace")
+        tests(["cargo", "test", "--locked", "--package", args.package])
+    elif args.lane == "build":
+        run(["cargo", "build", "--release", "--workspace", "--locked",
+             *(WASM_TARGET if KIND == "web" else [])])
+        print(f"Build artifacts: {os.environ['CARGO_TARGET_DIR']}")
+    elif args.lane in {"property", "surface"}:
+        name = args.test if args.lane == "property" else SURFACE_TESTS[KIND]
+        target = WASM_TARGET if args.lane == "surface" and KIND == "web" else []
+        tests(["cargo", "test", "--workspace", "--locked", *target, f"--test={name}"])
+    elif args.lane == "mutants":
+        check_mutants(mutation_scope(args, root), output)
+    elif args.lane == "proof":
+        check_proof(rust_file(args.path, root), output)
+
+
+def main():
+    args = arguments()
+    root = Path(os.environ.get("MISE_PROJECT_ROOT") or Path.cwd()).resolve()
+    os.chdir(root)
+    if not (root / "Cargo.toml").is_file():
+        raise ValueError("run from a Cargo workspace root containing Cargo.toml")
+    manifest = subprocess.check_output(
+        ["cargo", "locate-project", "--workspace", "--message-format", "plain"], text=True
+    ).strip()
+    if Path(manifest).resolve().parent != root:
+        raise ValueError("run from the actual Cargo workspace root")
+
+    cache = os.environ.get("SIGNUM_RUST_CACHE")
+    root_key = hashlib.sha256(os.fsencode(root)).hexdigest()[:20]
+    base = (Path(cache) if cache else Path(tempfile.gettempdir()) / f"signum-rust-{os.getuid()}" / root_key).resolve()
+    if cache and not Path(cache).is_absolute():
+        raise ValueError("SIGNUM_RUST_CACHE must be an absolute path outside the workspace")
+    if base == root or root in base.parents:
+        raise ValueError("Rust verification output must be outside the workspace")
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if base.stat().st_uid != os.getuid() or base.stat().st_mode & 0o022:
+        raise ValueError("use a private cache owned by the current user")
+    with tempfile.TemporaryDirectory(prefix="signum-rust-", dir=base) as scratch:
+        os.environ["TMPDIR"] = scratch
+        os.environ["PROPTEST_DISABLE_FAILURE_PERSISTENCE"] = "1"
+        output = (
+            Path(tempfile.mkdtemp(prefix=f"signum-rust-{args.lane}-", dir=base))
+            if args.lane in {"build", "mutants"} else Path(scratch)
+        )
+        target = output / "cargo-target" if args.lane == "build" else base / "cargo-target"
+        if root == target.resolve() or root in target.resolve().parents:
+            raise ValueError("Cargo target directory must be outside the workspace")
+        os.environ["CARGO_TARGET_DIR"] = str(target)
+        execute(args, root, output)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.CalledProcessError as error:
+        sys.exit(error.returncode)
+    except (OSError, ValueError, KeyError) as error:
+        sys.exit(f"signum-rust: {error}")
