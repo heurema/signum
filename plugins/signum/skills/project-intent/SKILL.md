@@ -1,6 +1,6 @@
 ---
 name: project-intent
-description: For opted-in Signum projects, start or revisit a kickoff, resolve intent questions internally and recommend the next step, or deliver a scoped change. For “продолжи разбор поставки” use scripts/resume_delivery.py --project ROOT --rehearse. For brief recall use scripts/recall.py. Skip routine independent edits.
+description: For opted-in Signum projects, capture ordinary chat decisions and recover missed agreements, start or revisit a kickoff, resolve intent questions internally and recommend the next step, or deliver a scoped change. For “продолжи разбор поставки” use scripts/resume_delivery.py --project ROOT --rehearse. For brief recall use scripts/recall.py. Skip routine independent edits.
 ---
 
 # Project intent
@@ -8,6 +8,13 @@ description: For opted-in Signum projects, start or revisit a kickoff, resolve i
 Use the user's project root. Resolve scripts beside this installed file. Reply in the user's language.
 
 Apply the project workflow when the root has its own `.signum/state.json` or its project instructions identify Signum. The core requires the local journal for writes. In other projects continue in ordinary chat. Only an explicit request to connect a project starts [project setup](../setup/SKILL.md). A parent project, another open chat or an installed language profile grants no opt-in.
+
+## Decisions in ordinary chat
+
+On a project choice or a continuation, follow [chat decisions](references/chat-decisions.md).
+Use the native turn receipt when available. Split independent choices, retain open
+questions, and check recent project turns before answering from memory or starting dependent work.
+Simple unrelated edits need no journal call.
 
 ## Starting a project or deciding where to begin
 
@@ -37,7 +44,7 @@ Use the project root of a small isolated working copy. Run the adjacent `scripts
 {"request":"Full verbatim owner message","owner_turn":"codex:turn:<actual turn UUID>","outcome":"Observable behavior","rationale":"Why, including any clarifying answer","excludes":"Behavior and actions outside this change","files":["relative/file"],"report":"check.json","verification":"Concrete success example and a counterexample"}
 ```
 
-Use a new report path. Supply a real owner turn identifier from the conversation and the full original wording when it actually assigns this work. Alternatively use `basis` with the topic and exact ID of a current owner-confirmed decision that selects it. Read the source and check the scope yourself. Never make up an identifier or use an example as an assignment. For a revision pass `expected` with the confirmed permission ID. Show the outcome, limits, paths, check and report. Only confirm the displayed permission when its full scope is authorized.
+List decision dependencies in `depends_on` as exact `{"topic":"…","id":"…"}` versions. Use an empty list for genuinely independent work. Use a new report path. Supply a real owner turn identifier from the conversation and the full original wording when it actually assigns this work. Alternatively use `basis` with the topic and exact ID of a current owner-confirmed decision that selects it. Read the source and check the scope yourself. Never make up an identifier or use an example as an assignment. For a revision pass `expected` with the confirmed permission ID. Show the outcome, limits, paths, check and report. Only confirm the displayed permission when its full scope is authorized.
 
 Run `start ID --touch path` before editing; repeat `--touch` for additional intended files. Implement the smallest change. If the work needs a wider boundary, stop and propose a revision. Record the check and hand the exact version to the owner using [the delivery steps](references/delivery.md). A failed check or an extra workspace change blocks delivery. A local scope check covers persistent changes in this copy; it grants no external side effects.
 
@@ -55,7 +62,7 @@ Keep ordinary edits, small reversible choices and open brainstorming in the norm
 
 For a known topic and complete wording, read this skill and run `core prepare --topic KEY` together. Send `summary, source, reason` on stdin. Include `expected` for a particular predecessor or `null` for a deliberately new topic. Display the exact pending terms. For relative changes first resolve the current wording. Surface any conflict.
 
-For whole, unqualified assent to a displayed plain decision, run `core assent` once. Send JSON with `reply` (verbatim), `shown` (complete wording), and the proposal `id`. If the wording was shown before staging, send `record` instead of `id`, including the known predecessor. A returned `confirmed` or `already_current` completes the turn. Changed terms stay open. For a rich record, permission, competing version or a clear affirmative outside the short vocabulary follow [Recording a choice](references/decisions.md). Preserve the original authority limits and the project's agreed research method.
+For a native chat decision use the source-checked capture workflow first. In the manual journal workflow, for whole, unqualified assent to a displayed plain decision, run `core assent` once. Send JSON with `reply` (verbatim), `shown` (complete wording), and the proposal `id`. If the wording was shown before staging, send `record` instead of `id`, including the known predecessor. A returned `confirmed` or `already_current` completes the turn. Changed terms stay open. For a rich record, permission, competing version or a clear affirmative outside the short vocabulary follow [Recording a choice](references/decisions.md). Preserve the original authority limits and the project's agreed research method.
 
 ## Resuming or delivering work
 

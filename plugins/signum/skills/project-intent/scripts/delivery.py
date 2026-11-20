@@ -488,7 +488,9 @@ class Deliveries:
         return self.starts[identifier]
 
     def start(self, project, journal, args):
+        import capture_inbox
         permission = require_permission(journal, args.permission)
+        capture_inbox.check_start(project, journal, permission)
         scope = scope_guard.parse(permission.get("scope"))
         scope_guard.check_touches(scope, args.touch)
         recorded_at = now()
