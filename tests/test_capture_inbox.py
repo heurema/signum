@@ -25,8 +25,19 @@ class CaptureInboxTest(unittest.TestCase):
         self.path = self.folder / "state.json"
         signum.write_journal(self.path, signum.Journal())
         self.event = {"hook_event_name": "UserPromptSubmit", "cwd": str(self.root),
+                      "transcript_path": str(self.root / "history.jsonl"),
                       "session_id": str(uuid4()), "turn_id": str(uuid4()), "prompt": "SQLx подходит, откат обсудим позже"}
         self.key = self.event["session_id"], self.event["turn_id"]
+
+    def test_session_without_persistent_history_leaves_no_receipt(self):
+        for fields in ({}, {"transcript_path": None}, {"transcript_path": ""}):
+            with self.subTest(fields=fields):
+                event = dict(self.event)
+                del event["transcript_path"]
+                self.assertEqual(inbox.receive(dict(event, **fields)), {})
+                self.assertFalse(inbox.active(self.root))
+        inbox.receive(self.event)
+        self.assertTrue(inbox.native_prompt_seen(self.root, *self.key, self.event["prompt"]))
 
     def test_foreign_project_subagent_and_conflicting_retry(self):
         with tempfile.TemporaryDirectory() as other:
@@ -72,7 +83,7 @@ class CaptureInboxTest(unittest.TestCase):
             self.assertEqual(recovered.status("rollback")["proposals"][0]["state"], "pending")
             self.assertEqual(inbox.inspect(self.root, recovered)["pending"], [])
             with patch.object(chat_source, "recent_turns", return_value=dict(history, complete=False)):
-                with self.assertRaisesRegex(ValueError, "incomplete|pending"):
+                with self.assertRaisesRegex(ValueError, "incomplete.*original project"):
                     inbox.check_start(self.root, recovered, {"depends_on": [{"topic": "test", "id": "1" * 24}]})
 
     def test_stale_declared_dependency_with_separate_owner_permission(self):

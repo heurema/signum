@@ -1,6 +1,6 @@
 ---
 name: project-intent
-description: For opted-in Signum projects, capture ordinary chat decisions and recover missed agreements, start or revisit a kickoff, resolve intent questions internally and recommend the next step, or deliver a scoped change. For “продолжи разбор поставки” use scripts/resume_delivery.py --project ROOT --rehearse. For brief recall use scripts/recall.py. Skip routine independent edits.
+description: In opted-in Signum projects, ground design advice in the current scope and earlier project choices, capture decisions, resume work or deliver a scoped change. For “продолжи разбор поставки” use scripts/resume_delivery.py --project ROOT --rehearse. For brief recall use scripts/recall.py. Skip routine independent edits.
 ---
 
 # Project intent
@@ -9,9 +9,9 @@ Use the user's project root. Resolve scripts beside this installed file. Reply i
 
 Apply the project workflow when the root has its own `.signum/state.json` or its project instructions identify Signum. The core requires the local journal for writes. In other projects continue in ordinary chat. Only an explicit request to connect a project starts [project setup](../setup/SKILL.md). A parent project, another open chat or an installed language profile grants no opt-in.
 
-## Decisions in ordinary chat
+## Project advice and decisions in ordinary chat
 
-On a project choice or a continuation, follow [chat decisions](references/chat-decisions.md).
+Before recommending or drafting a project approach, follow the scope check in [chat decisions](references/chat-decisions.md). A request for a “command” can define the operation while leaving its interface open. Look for a choice covering this operation. If several project entry points fit, ask which should perform it before proposing files or recording a contract. Use the same reference to capture a choice or resume a discussion.
 Use the native turn receipt when available. Split independent choices, retain open
 questions, and check recent project turns before answering from memory or starting dependent work.
 Simple unrelated edits need no journal call.
@@ -34,7 +34,7 @@ For an adopted Rust direction, distinguish an empty Cargo workspace from selecti
 
 During a pilot with a designated Signum feedback backlog, capture observed plugin bugs, friction or ideas there. Attach a project alias, workflow step, impact and a local turn or contract reference. Group repeats. If the backlog is outside the writable workspace, buffer the observation in `.signum/feedback-pending.md` and report it as pending until transferred. Continue the host project's task. Pause a dependent action if scope or acceptance cannot be trusted. Logging grants no authority to repair the plugin.
 
-Use this path for a substantive change or when the owner asks to work under a contract. A routine edit can stay in ordinary chat. Read the relevant existing behavior. Put the user's request in their own words and the intended result in yours. If two plausible readings produce different outcomes, give the smallest example that separates them and ask one question. Let an undecided owner compare the outcomes. Research a material unknown only until it changes the choice.
+Use this path for a substantive change or when the owner asks to work under a contract. A routine edit can stay in ordinary chat. Read the relevant existing behavior. If two readings imply different outcomes, give the smallest example that separates them. When the outcome is already agreed, keep it fixed across options and ask only about the remaining implementation choice before editing. Research a material unknown only until it changes that choice.
 
 If the project has a language workflow in `mise-tasks/signum-<language>`, inspect that project-owned task when drafting verification. Choose the smallest checks that exercise the promised behavior, name them in the contract and run them through the normal evidence step. A missing required check leaves the criterion open. Projects can keep their existing verification commands.
 
