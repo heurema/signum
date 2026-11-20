@@ -1,0 +1,16 @@
+{
+  "name": "signum",
+  "version": "0.2.11",
+  "description": "Resolve project decisions and review local changes against their agreed contracts.",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Signum",
+    "shortDescription": "Review and resume local project decisions",
+    "developerName": "Heurema",
+    "category": "Productivity",
+    "defaultPrompt": ["Set up Signum for this project"]
+  },
+  "extensions": {
+    "com.openai": {"onboardingSkill": "./skills/setup/SKILL.md"}
+  }
+}

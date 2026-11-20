@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a defect, inconsistency, or broken Signum behavior
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug report. Please keep it bounded and reproducible.
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: Describe the observed behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: Reproduction steps
+      description: Include exact commands, files, fixtures, or links where possible.
+      placeholder: |
+        1. Run ...
+        2. Open ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, shell, Signum version/ref, relevant tool versions, and any important context.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Regression or not
+      options:
+        - Yes, this worked before
+        - No, this never worked for me
+        - Unsure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: willingness_to_pr
+    attributes:
+      label: Willingness to submit PR
+      options:
+        - I can submit a PR if maintainers accept the intent
+        - I can help test or review
+        - I am only reporting the bug
+    validations:
+      required: true

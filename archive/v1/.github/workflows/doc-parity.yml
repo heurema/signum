@@ -1,0 +1,58 @@
+name: Doc Parity
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - staging
+
+permissions:
+  contents: read
+
+jobs:
+  doc-parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        # pinned from actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Run doc parity check
+        run: |
+          set +e
+          bash lib/doc-parity-check.sh > doc-parity.json
+          STATUS=$?
+          set -e
+          echo "doc_parity_exit=$STATUS" >> "$GITHUB_ENV"
+          cat doc-parity.json
+
+      - name: Emit warnings
+        run: |
+          COUNT=$(jq '.findings | length' doc-parity.json)
+          echo "doc_parity_findings=$COUNT" >> "$GITHUB_ENV"
+          jq -r '.findings[] | if .severity == "error" then "::error file=\(.file)::[\(.code)] \(.message) -- \(.details)" else "::warning file=\(.file)::[\(.code)] \(.message) -- \(.details)" end' doc-parity.json || true
+
+      - name: Add summary
+        run: |
+          {
+            echo "## Doc Parity"
+            echo
+            echo "- Status: \`$(jq -r '.status' doc-parity.json)\`"
+            echo "- Summary: $(jq -r '.summary' doc-parity.json)"
+            echo
+            echo "### Findings"
+            jq -r '.findings[] | "- [\(.code)] \(.file): \(.message) — \(.details)"' doc-parity.json || echo "- none"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail on blocking doc parity drift
+        run: |
+          if [ "$doc_parity_exit" -ne 0 ] || [ "$(jq -r '.status' doc-parity.json)" = "error" ]; then
+            echo "Blocking doc parity drift detected."
+            exit 1
+          fi
+
+      - name: Run doc parity unit tests
+        run: bash tests/test-doc-parity.sh

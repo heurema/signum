@@ -1,0 +1,39 @@
+name: PR Intake Gate
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  pr-intake-gate:
+    name: pr-intake-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout trusted base code
+        # pinned from actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Run PR intake gate
+        # pinned from heurema/repo-governance/actions/pr-intake-gate@v0.4.0
+        uses: heurema/repo-governance/actions/pr-intake-gate@f6a16882fd5e28968d77be063bb0ed4dca266c99
+        with:
+          policy-path: .github/pr-intake-gate.yml
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          codex-review-gate: 'false'

@@ -1,0 +1,164 @@
+project:
+  name: 'Signum'
+
+high_risk:
+  description: 'workflows, dependencies, auth/security, install scripts, public APIs, schemas, command behavior, or runtime behavior'
+
+trivial:
+  max_changed_lines: 30
+  allowed_path_globs:
+    - 'README.md'
+    - 'QUICKSTART.md'
+    - 'docs/**'
+    - '*.md'
+    - 'tests/**'
+    - 'test/**'
+
+high_risk_path_globs:
+  - '.github/workflows/**'
+  - '.github/actions/**'
+  - '.github/pr-intake-gate.yml'
+  - 'package.json'
+  - 'package-lock.json'
+  - 'pnpm-lock.yaml'
+  - 'yarn.lock'
+  - 'requirements*.txt'
+  - 'pyproject.toml'
+  - 'poetry.lock'
+  - 'Dockerfile'
+  - 'docker/**'
+  - 'scripts/install*'
+  - 'scripts/**/*.sh'
+  - 'commands/**'
+  - 'agents/**'
+  - 'lib/**'
+  - 'lib/schemas/**'
+  - 'evals/**'
+  - '**/auth/**'
+  - '**/security/**'
+  - '**/crypto/**'
+  - '**/migrations/**'
+
+instruction_surface:
+  description: 'Signum files that AI agents may read as instructions, project intent, commands, prompts, review templates, schemas, evals, or operating context'
+  path_globs:
+    - 'README.md'
+    - 'QUICKSTART.md'
+    - 'AGENTS.md'
+    - '**/AGENTS.md'
+    - 'CLAUDE.md'
+    - '**/CLAUDE.md'
+    - 'GEMINI.md'
+    - '**/GEMINI.md'
+    - 'SKILL.md'
+    - '**/SKILL.md'
+    - '.github/PULL_REQUEST_TEMPLATE.md'
+    - '.github/pull_request_template.md'
+    - '.github/pull_request_template/**'
+    - '.github/ISSUE_TEMPLATE/**'
+    - '.github/copilot-instructions.md'
+    - '.github/pr-intake-gate.yml'
+    - 'project.intent.md'
+    - '.punk/**'
+    - 'agents/**'
+    - 'commands/**'
+    - 'docs/research/**'
+    - 'docs/plans/**'
+    - 'evals/**'
+    - 'lib/prompts/**'
+    - 'platforms/**/SKILL.md'
+
+prompt_injection:
+  enabled: true
+  description: 'detect obvious prompt-injection-like additions in external PRs before ordinary review'
+  text_path_globs:
+    - '*.md'
+    - '**/*.md'
+    - '*.mdx'
+    - '**/*.mdx'
+    - '*.txt'
+    - '**/*.txt'
+    - '.github/**'
+    - 'agents/**'
+    - 'commands/**'
+    - 'docs/**'
+    - 'evals/**'
+    - 'lib/prompts/**'
+    - 'platforms/**'
+
+trusted_authors:
+  permissions:
+    - 'admin'
+    - 'maintain'
+    - 'write'
+  fallback_author_associations:
+    - 'OWNER'
+    - 'MEMBER'
+    - 'COLLABORATOR'
+
+external_context:
+  required_sections:
+    - 'Problem'
+    - 'Why now'
+    - 'Existing options checked'
+    - 'Alternatives considered'
+    - 'No-code alternative'
+    - 'Why code is needed'
+  no_code_section: 'No-code alternative'
+  first_time_author_associations:
+    - 'FIRST_TIMER'
+    - 'FIRST_TIME_CONTRIBUTOR'
+
+labels:
+  pass: 'intake/pass'
+  needs_issue: 'intake/needs-issue'
+  needs_more_context: 'intake/needs-more-context'
+  no_code_alternative: 'intake/no-code-alternative'
+  high_risk: 'intake/high-risk'
+  accepted_for_pr: 'intake/accepted-for-pr'
+  first_time: 'intake/first-time-contributor'
+  override: 'maintainer/override-intake'
+
+linked_intent:
+  accept_patterns:
+    - '#\d+'
+    - 'issues/\d+'
+    - 'discussions/\d+'
+    - '(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+#\d+'
+    - 'https://github.com/[^/\s]+/[^/\s]+/(issues|discussions)/\d+'
+
+label_details:
+  intake/pass:
+    color: '2ea44f'
+    description: 'PR intake passed'
+  intake/needs-issue:
+    color: 'd29922'
+    description: 'PR needs linked Issue or Discussion intent'
+  intake/needs-more-context:
+    color: 'd29922'
+    description: 'External PR needs required problem, timing, option, and alternative context'
+  intake/no-code-alternative:
+    color: 'd29922'
+    description: 'External PR needs no-code alternative analysis'
+  intake/high-risk:
+    color: 'cf222e'
+    description: 'PR touches high-risk Signum surfaces and needs maintainer attention'
+  intake/accepted-for-pr:
+    color: '0969da'
+    description: 'Maintainer accepted external PR intent for ordinary review'
+  intake/first-time-contributor:
+    color: 'bf8700'
+    description: 'External PR author appears to be a first-time contributor'
+  maintainer/override-intake:
+    color: '8250df'
+    description: 'Maintainer accepted responsibility to bypass intake gate'
+
+bot_comment:
+  marker: '<!-- pr-intake-gate -->'
+
+llm:
+  enabled: false
+  provider: 'openai'
+  model_fast: 'gpt-5.4-mini'
+  model_reasoning: 'gpt-5.5'
+  max_diff_chars: 30000
