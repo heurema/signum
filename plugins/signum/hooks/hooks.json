@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -E -s -B \"$PLUGIN_ROOT/skills/project-intent/scripts/capture_inbox.py\" --hook",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

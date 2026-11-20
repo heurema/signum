@@ -15,6 +15,7 @@ import unicodedata
 from uuid import uuid4
 
 import fcntl
+import decision_capture
 import delivery
 import scope_guard
 
@@ -25,7 +26,7 @@ NONCE_PATTERN = re.compile(r"[0-9a-f]{32}")
 OWNER_TURN_PATTERN = re.compile(r"codex:turn:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 KINDS = {"decision", "permission", "check"}
 REQUIRED = {"topic", "kind", "summary", "source", "reason", "replaces"}
-OPTIONAL = {"questions", "scope", "verification", "authority_limit", "basis"}
+OPTIONAL = {"questions", "scope", "verification", "authority_limit", "basis", "depends_on"}
 BASIS_KIND = {"permission": "decision", "check": "permission"}
 ASSENT_REPLIES = {"да", "согласен", "согласна", "подтверждаю", "yes", "agree", "i agree", "i confirm"}
 SCHEMA_VERSION = 1
@@ -70,6 +71,17 @@ def validate_record(record):
     questions = record.get("questions", [])
     if not isinstance(questions, list) or not all(nonempty(item) for item in questions):
         raise SignumError("questions must be a list of non-empty strings.")
+    if "depends_on" in record:
+        dependencies = record["depends_on"]
+        if kind != "permission" or not isinstance(dependencies, list):
+            raise SignumError("depends_on must be a list of decision versions on a permission.")
+        topics = set()
+        for item in dependencies:
+            if (not isinstance(item, dict) or item.keys() != {"topic", "id"}
+                    or not matches(TOPIC_PATTERN, item["topic"]) or not matches(ID_PATTERN, item["id"])
+                    or item["topic"] == record["topic"] or item["topic"] in topics):
+                raise SignumError("Each dependency must name a distinct decision topic and version.")
+            topics.add(item["topic"])
     if "basis" in record:
         basis = record["basis"]
         if kind not in BASIS_KIND:
@@ -130,7 +142,7 @@ def read_prepare(stream, topic):
 def read_draft(stream, topic):
     terms = json.load(stream, object_pairs_hook=lambda pairs: unique_json_object(pairs, operation="Draft"))
     required = {"request", "outcome", "rationale", "excludes", "files", "report", "verification"}
-    if not isinstance(terms, dict) or not required <= terms.keys() <= required | {"expected", "basis", "owner_turn"}:
+    if not isinstance(terms, dict) or not required <= terms.keys() <= required | {"expected", "basis", "owner_turn", "depends_on"}:
         raise SignumError("Draft requires request, outcome, rationale, excludes, files, report and verification.")
     record = {
         "kind": "permission", "topic": topic, "replaces": terms.get("expected"),
@@ -138,7 +150,7 @@ def read_draft(stream, topic):
         "authority_limit": terms["excludes"], "verification": terms["verification"],
         "scope": scope_guard.encode(terms["files"], terms["report"]),
     }
-    for field in ("basis", "owner_turn"):
+    for field in ("basis", "owner_turn", "depends_on"):
         if field in terms:
             record[field] = terms[field]
     return proposal_input(record)
@@ -193,6 +205,8 @@ class Journal:
         self.confirmed = {}
         self.accepted = set()
         self.withdrawn = {}
+        self.reviewed = {}
+        self.owner_evidence = {}
 
     @classmethod
     def read(cls, path, *, required=False):
@@ -215,6 +229,7 @@ class Journal:
             raise SignumError("Unsupported or invalid journal format.")
         for event in document["events"]:
             journal.append(event)
+        decision_capture.load_reviews(sys.modules[__name__], journal, document.get("capture_reviews", []))
         journal.enabled = True
         return journal
 
@@ -245,6 +260,10 @@ class Journal:
                 raise SignumError(f"Cannot confirm {identifier}. " + " ".join(issues))
             self.confirmed[record["topic"]] = identifier
             self.accepted.add(identifier)
+            if "owner_evidence" in event:
+                if record["kind"] != "decision" or not nonempty(event["owner_evidence"]):
+                    raise SignumError("Invalid decision confirmation source.")
+                self.owner_evidence[identifier] = event["owner_evidence"]
         elif event.get("event") == "withdrawn":
             if (
                 identifier not in self.proposed
@@ -280,16 +299,24 @@ class Journal:
         ):
             raise SignumError(f"basis must identify a confirmed {BASIS_KIND[record['kind']]} of its topic.")
 
+        for dependency in record.get("depends_on", []):
+            topic, version = dependency["topic"], dependency["id"]
+            if (version not in self.accepted or self.record(version)["kind"] != "decision"
+                    or self.record(version)["topic"] != topic):
+                raise SignumError(f"Unknown confirmed decision dependency: {topic}.")
+
     def basis_issues(self, record):
+        dependencies = record.get("depends_on", [])
+        issues = [f"Decision {d['topic']} changed from {d['id']} to {self.confirmed.get(d['topic'])}."
+                  for d in dependencies if self.confirmed.get(d["topic"]) != d["id"]]
         basis = record.get("basis")
-        if basis is None:
-            return []
-        current = self.confirmed[basis["topic"]]
-        if current != basis["id"]:
-            return [f"Basis {basis['topic']} changed from {basis['id']} to {current}."]
-        if record["kind"] == "check":
-            return self.basis_issues(self.record(current))
-        return []
+        if basis is not None:
+            current = self.confirmed[basis["topic"]]
+            if current != basis["id"]:
+                issues.append(f"Basis {basis['topic']} changed from {basis['id']} to {current}.")
+            elif record["kind"] == "check":
+                issues.extend(self.basis_issues(self.record(current)))
+        return issues
 
     def confirmation_issues(self, record):
         current = self.confirmed.get(record["topic"])
@@ -379,7 +406,7 @@ class Journal:
             "proposal": {"id": identifier, "summary": summary},
         }
 
-    def confirm(self, identifier):
+    def confirm(self, identifier, *, owner_evidence=None):
         if identifier not in self.proposed:
             raise SignumError(f"No proposal matches {identifier}. Use the full ID from the displayed proposal.")
         if identifier in self.withdrawn:
@@ -387,7 +414,10 @@ class Journal:
         record = self.record(identifier)
         if identifier not in self.accepted:
             self.require_permission_origin(record)
-            self.append({"event": "confirmed", "id": identifier, "at": timestamp()})
+            event = {"event": "confirmed", "id": identifier, "at": timestamp()}
+            if owner_evidence is not None:
+                event["owner_evidence"] = owner_evidence
+            self.append(event)
         elif self.confirmed[record["topic"]] != identifier or self.basis_issues(record):
             raise SignumError(f"Confirmed version {identifier} is no longer current.")
         return self.confirmed_entry(identifier)
@@ -458,7 +488,10 @@ class Journal:
     def confirmed_entry(self, identifier):
         record = self.record(identifier)
         issues = self.basis_issues(record)
-        return {"id": identifier, **record, "state": "stale" if issues else "current", "issues": issues}
+        entry = {"id": identifier, **record, "state": "stale" if issues else "current", "issues": issues}
+        if identifier in self.owner_evidence:
+            entry["owner_evidence"] = self.owner_evidence[identifier]
+        return entry
 
     def status(self, topic=None):
         confirmed = [
@@ -616,7 +649,10 @@ def write_journal(path, journal):
             mode="w", encoding="utf-8", newline="\n", dir=path.parent, prefix=".journal-", delete=False,
         ) as stream:
             temporary_path = Path(stream.name)
-            write_json(stream, {"schema_version": SCHEMA_VERSION, "events": journal.events})
+            document = {"schema_version": SCHEMA_VERSION, "events": journal.events}
+            if getattr(journal, "reviewed", None):
+                document["capture_reviews"] = list(journal.reviewed.values())
+            write_json(stream, document)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary_path, path)
@@ -680,6 +716,7 @@ def arguments():
     parser.add_argument("--project", required=True, type=Path, help="existing project directory")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init", help="enable Signum in this project")
+    commands.add_parser("capture", help="record source-checked choices from a Codex turn")
     for name in ("status", "history", "contract"):
         commands.add_parser(name).add_argument("--topic", help="show one topic")
     commands.add_parser("draft", help="draft a file-scoped contract from the request and intended outcome").add_argument(
@@ -724,6 +761,13 @@ def run(args):
         return result
 
     Journal.read(path, required=True)
+    if args.command == "capture":
+        import chat_source
+        payload = json.load(sys.stdin, object_pairs_hook=lambda pairs: unique_json_object(pairs, operation="Capture"))
+        try:
+            return decision_capture.capture(sys.modules[__name__], project, directory, payload, chat_source.read_turn)
+        except chat_source.ChatSourceError as error:
+            raise SignumError(str(error)) from error
     if args.command == "draft":
         record = read_draft(sys.stdin, args.topic)
     elif args.command == "propose":
@@ -740,6 +784,10 @@ def run(args):
     with locked_store(directory):
         journal = Journal.read(path, required=True)
         before = len(journal.events)
+        if args.command in ("draft", "propose") and record["kind"] == "permission":
+            import capture_inbox
+            if capture_inbox.active(project) and "depends_on" not in record and "basis" not in record:
+                raise SignumError("List the decision versions this permission depends on, or use depends_on: [] for independent work.")
         if args.command == "draft":
             current = journal.confirmed.get(args.topic)
             if current != record["replaces"]:
