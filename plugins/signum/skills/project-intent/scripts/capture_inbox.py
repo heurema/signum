@@ -65,6 +65,10 @@ def native_prompt_seen(project, thread, turn, user_text):
 def receive(event):
     if event.get("hook_event_name") != "UserPromptSubmit" or event.get("agent_id") or event.get("agent_type"):
         return {}
+    # Ephemeral Codex turns have no persistent history to reconcile on resume.
+    transcript = event.get("transcript_path")
+    if not isinstance(transcript, str) or not Path(transcript).is_absolute():
+        return {}
     cwd, thread, turn, prompt = (event.get(k) for k in ("cwd", "session_id", "turn_id", "prompt"))
     if not all(isinstance(x, str) for x in (cwd, thread, turn, prompt)) or not Path(cwd).is_absolute():
         return {}
@@ -81,8 +85,10 @@ def receive(event):
             if db.execute("SELECT digest FROM prompts WHERE thread=? AND turn=?", (thread, turn)).fetchone() != (digest(prompt),):
                 raise ValueError("A different prompt already occupies this source turn.")
     return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": (
-        f"Signum {thread}/{turn}. On decisions or continuation follow "
-        f"{Path(__file__).resolve().parents[1] / 'references/chat-decisions.md'}. Routine chat proceeds normally."
+        f"Signum {thread}/{turn}. Before choosing an interface, check the scope and prior choices. "
+        "When the outcome is known but its supported entry points are still open, ask which should run that same operation before drafting. "
+        f"For scope, decisions or continuation see {Path(__file__).resolve().parents[1] / 'references/chat-decisions.md'}. "
+        "Routine chat proceeds normally."
     )}}
 
 
@@ -143,7 +149,11 @@ def check_start(project, journal, permission):
     if not permission.get("basis") and not permission.get("depends_on"):
         return
     state = inspect(project, journal)
-    if not state["complete"] or state["pending"]:
+    if not state["complete"]:
+        raise ValueError("Project chat history is incomplete for this directory. Inspect the warnings with "
+                         "capture_inbox.py --project ROOT. For a copied journal, check the original project "
+                         "directory where the chats were recorded before starting new decision-dependent work.")
+    if state["pending"]:
         raise ValueError("Review the pending project chat turns before starting decision-dependent work (capture_inbox.py --project ROOT).")
 
 

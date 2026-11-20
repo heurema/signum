@@ -1,6 +1,6 @@
 {
   "name": "signum",
-  "version": "0.2.12",
+  "version": "0.2.14",
   "description": "Resolve project decisions and review local changes against their agreed contracts.",
   "skills": "./skills/",
   "interface": {
