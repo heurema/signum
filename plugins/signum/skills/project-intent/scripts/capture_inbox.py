@@ -12,9 +12,12 @@ import time
 
 import chat_source
 import decision_capture
+import history_origin
+import scope_guard
 
 ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 DB = "chat-inbox.sqlite3"
+CONNECTION_PROBES = {"ping", "проверка связи", "проверяем связь"}
 
 
 def regular(path):
@@ -35,6 +38,8 @@ def database(project, write=False):
     for candidate in (path, *(folder / (DB + suffix) for suffix in ("-journal", "-shm", "-wal"))):
         if candidate.is_symlink() or (candidate.exists() and not regular(candidate)):
             raise ValueError("The chat receipt store must be a local regular file.")
+        if write and candidate.exists() and candidate.stat().st_nlink > 1:
+            raise ValueError("Cannot write to a receipt store shared by hard link.")
     mode = "rwc" if write else "ro"
     db = sqlite3.connect(path.as_uri() + "?mode=" + mode, uri=True, timeout=2)
     try:
@@ -42,6 +47,8 @@ def database(project, write=False):
             db.execute("CREATE TABLE IF NOT EXISTS tracking (id INTEGER PRIMARY KEY, since INTEGER NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS prompts (thread TEXT, turn TEXT, digest TEXT NOT NULL,"
                        " PRIMARY KEY(thread, turn))")
+            db.execute("CREATE TABLE IF NOT EXISTS archived_prompts (thread TEXT, turn TEXT, digest TEXT NOT NULL,"
+                       " reason TEXT NOT NULL, archived_at INTEGER NOT NULL, PRIMARY KEY(thread, turn))")
             db.execute("INSERT OR IGNORE INTO tracking VALUES (1, ?)", (int(time.time()),))
         yield db
         if write:
@@ -54,12 +61,41 @@ def digest(text):
     return hashlib.sha256(text.rstrip("\r\n").encode("utf-8")).hexdigest()
 
 
+def has_archive(db):
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='archived_prompts'").fetchone() is not None
+
+
 def native_prompt_seen(project, thread, turn, user_text):
     if not active(project):
         return False
     with database(project) as db:
         row = db.execute("SELECT digest FROM prompts WHERE thread=? AND turn=?", (thread, turn)).fetchone()
+        if row is None and has_archive(db):
+            row = db.execute("SELECT digest FROM archived_prompts WHERE thread=? AND turn=?", (thread, turn)).fetchone()
     return row == (digest(user_text),)
+
+
+def archive_receipts(project, pairs, reason):
+    keys = [tuple(pair.split("/")) for pair in pairs]
+    if not reason or not reason.strip() or any(len(key) != 2 or not all(ID.fullmatch(x) for x in key) for key in keys):
+        raise ValueError("Specify THREAD/TURN and the owner's reason for archiving these receipts.")
+    with database(project, write=True) as db:
+        active_keys = {}
+        for key in dict.fromkeys(keys):
+            if db.execute("SELECT 1 FROM archived_prompts WHERE thread=? AND turn=?", key).fetchone():
+                continue
+            row = db.execute("SELECT digest FROM prompts WHERE thread=? AND turn=?", key).fetchone()
+            if row is None:
+                raise ValueError(f"No receipt for {'/'.join(key)}.")
+            active_keys[key] = row[0]
+        for key, item, _ in chat_source.lookup_receipts(project, active_keys):
+            if item is not None:
+                raise ValueError(f"Source {'/'.join(key)} is readable. Review the message before starting.")
+        for key, fingerprint in active_keys.items():
+            db.execute("INSERT INTO archived_prompts (thread,turn,digest,reason,archived_at) VALUES (?,?,?,?,?)",
+                       (*key, fingerprint, reason.strip(), int(time.time())))
+            db.execute("DELETE FROM prompts WHERE thread=? AND turn=?", key)
+    return {"archived": list(dict.fromkeys(pairs))}
 
 
 def receive(event):
@@ -81,6 +117,11 @@ def receive(event):
     import signum
     with signum.locked_store(folder):
         with database(project, write=True) as db:
+            archived = db.execute("SELECT digest FROM archived_prompts WHERE thread=? AND turn=?", (thread, turn)).fetchone()
+            if archived:
+                if archived != (digest(prompt),):
+                    raise ValueError("A different prompt already occupies this archived source turn.")
+                return {}
             db.execute("INSERT OR IGNORE INTO prompts VALUES (?, ?, ?)", (thread, turn, digest(prompt)))
             if db.execute("SELECT digest FROM prompts WHERE thread=? AND turn=?", (thread, turn)).fetchone() != (digest(prompt),):
                 raise ValueError("A different prompt already occupies this source turn.")
@@ -92,32 +133,83 @@ def receive(event):
     )}}
 
 
-def inspect(project, journal, *, thread_limit=10, turn_limit=12, include_text=False):
-    """Read only messages since activation/checkpoint. A partial source never certifies a start."""
+def inspect(project, journal, *, thread_limit=10, turn_limit=12, include_text=False, advance=True, request_thread=None):
+    """Inspect the current history window and exact receipts still awaiting review."""
     with database(project) as db:
         since = db.execute("SELECT since FROM tracking WHERE id=1").fetchone()[0]
         native = {tuple(row) for row in db.execute("SELECT thread,turn FROM prompts")}
+        receipts = native.union(db.execute("SELECT thread,turn FROM archived_prompts")) if has_archive(db) else native
+    origin = history_origin.load(project)
+    inherited = {tuple(key.split("/")) for key in origin["receipts"]} if origin else set()
     before = int(time.time())
-    reviewed = {key for key, value in journal.reviewed.items() if value["completed"] and value["assistant_id"]}
-    result = chat_source.recent_turns(project, since=since, thread_limit=thread_limit, turn_limit=turn_limit,
-                                      reviewed=reviewed)
-    pending, seen = [], set()
-    warnings = list(result["warnings"])
+    # History can be reviewed before the hook supplies evidence of who submitted it.
+    reviewed = {key for key, value in journal.reviewed.items()
+                if value["completed"] and value["assistant_id"] and (key not in receipts or value["owner_seen"])}
+    def already_reviewed(item, review):
+        if not review or (item["allow_owner"] and not review["owner_seen"]):
+            return False
+        user_hash = decision_capture.digest([item["user_id"], item["user"]])
+        fingerprint = decision_capture.digest([user_hash, item["assistant_id"], item["assistant"]])
+        return review["fingerprint"] == fingerprint and review["completed"] == item["completed"]
+
+    def resolved_interruption(item):
+        if item.get("status") != "interrupted" or not item.get("complete_user_text", item.get("plain_user_text")):
+            return False
+        key = item["thread"], item["turn"]
+        if key in receipts and not item.get("receipt_matches", item["allow_owner"]):
+            return False
+        review = journal.reviewed.get(key)
+        if review:
+            return already_reviewed(item, review)
+        return (item.get("plain_user_text") and not item["assistant_id"]
+                and item["user"].strip().casefold() in CONNECTION_PROBES)
+
+    try:
+        result = chat_source.recent_turns(project, since=since, thread_limit=thread_limit, turn_limit=turn_limit,
+                                          reviewed=reviewed, skip_turn=resolved_interruption)
+    except (chat_source.ChatSourceError, OSError) as error:
+        outstanding = sorted(native - reviewed)
+        label = f" while checking {'/'.join(outstanding[0])}" if outstanding else ""
+        blockers = [f"Desktop history could not be read{label}: {error}"]
+        return {"complete": False, "pending": [], "pending_count": 0, "warnings": blockers, "start_blockers": blockers}
+    blockers = list(result["warnings"])
+    gaps = []
+    for key in sorted(inherited - receipts):
+        blockers.append(f"Source turn {'/'.join(key)}: the inherited receipt is missing from this copy.")
+    seen = set(result.get("skipped", ()))
+    pending = []
+    origin_recovered = []
+
     def check(item):
         key = (item["thread"], item["turn"])
         seen.add(key)
         review = journal.reviewed.get(key)
-        if not item["user_id"] and not item["assistant_id"]:
-            if key in native or not item["completed"]:
-                warnings.append("A submitted or running turn has no readable source yet.")
+        label = f"Source turn {key[0]}/{key[1]}"
+        interrupted = item.get("status") == "interrupted"
+        if key in receipts and (not item.get("receipt_matches", item["allow_owner"])
+                                or not item.get("complete_user_text", True)):
+            blockers.append(f"{label}: the submitted text is missing or does not match the receipt.")
             return
-        user_hash = decision_capture.digest([item["user_id"], item["user"]])
-        fingerprint = decision_capture.digest([user_hash, item["assistant_id"], item["assistant"]])
-        if review and review["fingerprint"] == fingerprint and review["completed"] == item["completed"]:
+        if interrupted and not item.get("complete_user_text", item.get("plain_user_text")):
+            problems = gaps if item.get("empty_turn") else blockers
+            problems.append(f"{label}: the turn was interrupted and its complete message is unknown.")
+            return
+        if not item["user_id"] and not item["assistant_id"] and not item.get("complete_user_text"):
+            if key in native or not item["completed"]:
+                blockers.append(f"{label}: no readable message is available yet.")
+            return
+        if already_reviewed(item, review) or resolved_interruption(item):
             return
         entry = {"thread": key[0], "turn": key[1]}
+        if (request_thread == key[0] and key not in inherited and not item.get("history_origin")
+                and item.get("latest_in_thread") and item.get("status") == "inProgress"
+                and item.get("plain_user_text") and not item["assistant_id"]):
+            entry["current_request"] = True
         if include_text:
             entry.update({name: item[name] for name in ("allow_owner", "completed")})
+            entry["status"] = item.get("status")
+            if review and item["allow_owner"] and not review["owner_seen"]:
+                entry["recheck_topics"] = sorted(review["choices"])
             for name in ("user", "assistant"):
                 entry[name] = item[name][:1200]
             entry["excerpt"] = any(len(item[name]) > 1200 for name in ("user", "assistant"))
@@ -125,36 +217,56 @@ def inspect(project, journal, *, thread_limit=10, turn_limit=12, include_text=Fa
     for item in result["turns"]:
         check(item)
     # A receipt can arrive before its chat is indexed or before its start timestamp window.
-    for key in sorted(native - seen):
-        previous = journal.reviewed.get(key)
-        if previous and previous["completed"] and previous["assistant_id"]:
-            continue
-        try:
-            check(chat_source.read_turn(project, *key))
-        except (OSError, ValueError, KeyError, chat_source.ChatSourceError):
-            warnings.append(f"Source turn {key[0]}/{key[1]} is unavailable.")
+    missing = sorted(native - seen - reviewed)
+    for key, item, error in chat_source.lookup_receipts(project, missing, verify_origin=sorted(inherited & native)):
+        if error is not None:
+            problems = gaps if isinstance(error, chat_source.MissingTurn) else blockers
+            problems.append(f"Source turn {key[0]}/{key[1]} is unavailable: {error}")
+        else:
+            if item.get("history_origin"):
+                origin_recovered.append({"thread": key[0], "turn": key[1], "source": item["history_origin"],
+                                         "allow_owner": item["allow_owner"]})
+            check(item)
+    warnings = list(dict.fromkeys([*blockers, *gaps]))
     complete = bool(result["complete"]) and not warnings
-    if complete and not pending and all(item["completed"] for item in result["turns"]):
+    if advance and complete and not pending and all(item["completed"] or item.get("status") == "interrupted"
+                                        for item in result["turns"]):
         with database(project, write=True) as db:
             db.execute("UPDATE tracking SET since=max(since,?) WHERE id=1", (before - 1,))
-    return {"complete": complete, "pending": pending[:4], "pending_count": len(pending),
-            "warnings": list(dict.fromkeys(warnings))}
+    data = {"complete": complete, "pending": pending[:4], "pending_count": len(pending),
+            "warnings": warnings, "start_blockers": blockers}
+    if origin_recovered:
+        data["origin_recovered"] = origin_recovered
+    return data
 
 
-def check_start(project, journal, permission):
+def pending_decisions(project, journal, permission, *, advance, request_thread=None):
     if not active(project):
+        if (permission.get("depends_on") or permission.get("basis")) and history_origin.load(project):
+            raise ValueError(f"Start of {permission['topic']} is waiting: this copy's receipt store is missing.")
         return
     if "depends_on" not in permission and not permission.get("basis"):
         raise ValueError("This earlier permission has no decision declaration. Revise it with depends_on before a new start.")
     if not permission.get("basis") and not permission.get("depends_on"):
         return
-    state = inspect(project, journal)
-    if not state["complete"]:
-        raise ValueError("Project chat history is incomplete for this directory. Inspect the warnings with "
-                         "capture_inbox.py --project ROOT. For a copied journal, check the original project "
-                         "directory where the chats were recorded before starting new decision-dependent work.")
-    if state["pending"]:
-        raise ValueError("Review the pending project chat turns before starting decision-dependent work (capture_inbox.py --project ROOT).")
+    state = inspect(project, journal, advance=advance, request_thread=request_thread)
+    step = permission.get("topic", "decision-dependent work")
+    problems = state["warnings"] if scope_guard.parse(permission.get("scope")) is None else state["start_blockers"]
+    if problems:
+        reasons = " ".join(problems[:3])
+        raise ValueError(f"Start of {step} is waiting. Project chat history is incomplete: {reasons} "
+                         "Check the original project history and retry. capture_inbox.py --project ROOT lists all warnings.")
+    current = next((item for item in state["pending"] if item.get("current_request")), None)
+    if state["pending_count"] > int(current is not None):
+        first = next(item for item in state["pending"] if item != current)
+        raise ValueError(f"Start of {step} is waiting. Review the pending message {first['thread']}/{first['turn']} "
+                         "for decisions used by this step (capture_inbox.py --project ROOT).")
+
+    return {"current_request": current, "history_gap_count": len(state["warnings"])}
+
+
+def check_start(project, journal, permission):
+    pending_decisions(project, journal, permission, advance=True)
 
 
 def main():
@@ -163,7 +275,12 @@ def main():
     parser.add_argument("--project", type=Path)
     parser.add_argument("--thread-limit", type=int, default=10)
     parser.add_argument("--turn-limit", type=int, default=12)
+    parser.add_argument("--archive-receipt", action="append", metavar="THREAD/TURN")
+    parser.add_argument("--reason")
     args = parser.parse_args()
+    if args.archive_receipt or args.reason is not None:
+        if args.hook or not args.project or not args.archive_receipt or not args.reason:
+            parser.error("Archiving requires --project, --archive-receipt and --reason together.")
     try:
         if args.hook:
             data = receive(json.load(sys.stdin))
@@ -174,8 +291,11 @@ def main():
                 if not active(project):
                     # A skill can still recover old sources when requested explicitly via chat_source.
                     raise ValueError("No native capture receipt yet. Check plugin hook trust or use chat_source.py for historical review.")
-                journal = signum.Journal.read(project / ".signum/state.json", required=True)
-                data = inspect(project, journal, thread_limit=args.thread_limit, turn_limit=args.turn_limit, include_text=True)
+                if args.archive_receipt:
+                    data = archive_receipts(project, args.archive_receipt, args.reason)
+                else:
+                    journal = signum.Journal.read(project / ".signum/state.json", required=True)
+                    data = inspect(project, journal, thread_limit=args.thread_limit, turn_limit=args.turn_limit, include_text=True)
         else:
             parser.error("Supply --project or --hook.")
         if data:

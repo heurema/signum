@@ -168,13 +168,9 @@ def implementation_manifest(scope, before, observed):
     return files
 
 
-def verify(project, scope, before, evidence):
+def check_workspace(scope, before, observed):
     if not isinstance(before, dict) or before.keys() != {"outside", "files", "directories"}:
         raise ScopeError("Exact file scope has no baseline captured before work.")
-    report = scope["report"]
-    if evidence["artifact"]["path"] != report:
-        raise ScopeError(f"Evidence must use the agreed check report path: {report}.")
-    observed = capture(project, scope)
     if observed["outside"] != before["outside"]:
         raise ScopeError("Workspace contains changes outside the exact file scope.")
     directories = observed["directories"]
@@ -185,6 +181,15 @@ def verify(project, scope, before, evidence):
     extra = directories.keys() - before["directories"].keys() - needed
     if extra:
         raise ScopeError(f"Workspace contains unexpected empty directories: {', '.join(sorted(extra))}.")
+
+
+def verify(project, scope, before, evidence):
+    report = scope["report"]
+    if evidence["artifact"]["path"] != report:
+        raise ScopeError(f"Evidence must use the agreed check report path: {report}.")
+    observed = capture(project, scope)
+    check_workspace(scope, before, observed)
+    directories = observed["directories"]
     current_files = observed["files"]
     changed = {entry["path"] for entry in implementation_manifest(scope, before, observed)}
     named = {entry["path"]: entry.get("sha256") for entry in evidence["files"]}

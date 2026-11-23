@@ -10,10 +10,16 @@ import stat
 import subprocess
 import sys
 import time
+from decision_capture import digest
+import history_origin
 
 
 class ChatSourceError(ValueError):
     pass
+
+
+class MissingTurn(ChatSourceError):
+    """Desktop could answer the lookup but has no readable history for this turn."""
 
 
 DESKTOP_BINARIES = (
@@ -69,6 +75,8 @@ class AppServer:
         self.process.stdin.flush()
 
     def call(self, method, params):
+        if time.monotonic() >= self.deadline:
+            raise ChatSourceError("Codex history read timed out.")
         self.serial += 1
         self.send({"id": self.serial, "method": method, "params": params})
         deadline = min(self.deadline, time.monotonic() + 8)
@@ -91,6 +99,10 @@ class AppServer:
             if response.get("id") != self.serial:
                 continue
             if not isinstance(response.get("result"), dict):
+                error = response.get("error")
+                if isinstance(error, dict) and method == "thread/read" and error.get("code") == -32600:
+                    if error.get("message") == f"thread not loaded: {params['threadId']}":
+                        raise MissingTurn("Desktop has not loaded this chat. Its contents are unknown.")
                 raise ChatSourceError("Codex could not read history with " + method + ".")
             return response["result"]
         raise ChatSourceError("Codex history read timed out.")
@@ -174,7 +186,7 @@ def with_previous(rows):
         current = previous
 
 
-def messages(server, project, thread_id, turn, previous_turn):
+def messages(server, project, thread_id, turn, previous_turn, *, origin_digest=None):
     turn_id = turn["id"]
     entries = page_rows(server, "thread/items/list", {
         "threadId": thread_id, "turnId": turn_id, "sortDirection": "asc",
@@ -191,38 +203,102 @@ def messages(server, project, thread_id, turn, previous_turn):
             users.append(item)
         elif item.get("type") == "agentMessage" and item.get("phase") == "final_answer" and not item.get("delivery"):
             final_id, final_text = item["id"], item["text"]
-    text, user_id, allow_owner = "", "", False
-    if users:
-        parts = [
-            [part["text"] for part in item["content"]
-             if part.get("type") == "text" and isinstance(part.get("text"), str)]
-            for item in users
-        ]
-        text = "\n\n".join("\n".join(chunks) for chunks in parts)
-        if len(users) == 1:
-            user_id = users[0]["id"]
-            if text and len(users[0]["content"]) == len(parts[0]) == 1 and user_id:
-                # Relayed tool input is a functionCallOutput. A userMessage alone
-                # cannot establish whether an API client acted for the owner.
-                from capture_inbox import native_prompt_seen
-                allow_owner = native_prompt_seen(project, thread_id, turn_id, text)
+    from capture_inbox import native_prompt_seen
+    if origin_digest is not None:
+        from capture_inbox import digest as prompt_digest
+    texts, user_hashes = [], []
+    receipt_matches = False
+    plain_user_text = False
+    for user in users:
+        chunks = [p["text"] for p in user["content"] if p.get("type") == "text" and isinstance(p.get("text"), str)]
+        body = "\n".join(chunks)
+        texts.append(body)
+        if not body.strip() or not user["id"] or len(chunks) != len(user["content"]):
+            continue
+        user_hashes.append(digest([user["id"], body]))
+        if len(chunks) == 1:
+            plain_user_text = len(users) == 1
+            if not receipt_matches and (origin_digest is None or prompt_digest(body) == origin_digest):
+                receipt_matches = native_prompt_seen(project, thread_id, turn_id, body)
+    # The receipt authenticates one intact message. It cannot authorize
+    # the combined text of a turn that later gained more messages.
+    user_id = users[0]["id"] if len(users) == 1 else ""
     return {
-        "thread": thread_id, "turn": turn_id, "user": text, "user_id": user_id,
-        "assistant": final_text, "assistant_id": final_id, "allow_owner": allow_owner,
+        "thread": thread_id, "turn": turn_id, "user": "\n\n".join(texts), "user_id": user_id,
+        "assistant": final_text, "assistant_id": final_id, "allow_owner": plain_user_text and receipt_matches,
+        "receipt_matches": receipt_matches, "user_message_hashes": user_hashes,
+        "empty_turn": not users and not final_id,
+        "complete_user_text": bool(users) and len(user_hashes) == len(users),
         "started_at": turn.get("startedAt"), "completed": turn.get("status") == "completed",
+        "status": turn.get("status"), "plain_user_text": plain_user_text,
         "previous_turn": previous_turn,
     }
 
 
+def lookup_receipts(project, keys, *, verify_origin=()):
+    """Read the requested turns and revalidate active inherited receipts, including reviewed ones."""
+    keys = list(dict.fromkeys(keys))
+    checks = dict.fromkeys([*keys, *verify_origin])
+    if not checks:
+        return
+    try:
+        root = project_root(project)
+        origins, refused = history_origin.resolve(root, checks)
+    except (ValueError, OSError, KeyError) as error:
+        for key in checks:
+            yield key, None, error
+        return
+    for key, reason in refused.items():
+        yield key, None, ChatSourceError(reason)
+    remaining = {}
+    for key in keys:
+        if key not in refused:
+            cwd, fingerprint = origins.get(key, (root, None))
+            remaining.setdefault((cwd, key[0]), {})[key[1]] = fingerprint
+    if not remaining:
+        return
+    try:
+        with AppServer(root) as server:
+            for (cwd, thread_id), wanted in remaining.items():
+                reason = MissingTurn("This turn is unavailable in the selected chat.")
+                try:
+                    checked_thread(server, cwd, thread_id)
+                    for index, (turn, previous) in enumerate(with_previous(turn_rows(server, thread_id, 100))):
+                        if index >= 2000:
+                            raise ChatSourceError("Turn lookup exceeds the local history limit.")
+                        turn_id = turn["id"]
+                        if turn_id not in wanted:
+                            continue
+                        fingerprint = wanted.pop(turn_id)
+                        try:
+                            item = messages(server, root, thread_id, turn, previous, origin_digest=fingerprint)
+                            item["latest_in_thread"] = index == 0
+                            if fingerprint is not None:
+                                if not item["receipt_matches"] or not item["complete_user_text"]:
+                                    raise ChatSourceError("Original message does not match the inherited receipt.")
+                                item["history_origin"] = str(cwd)
+                        except (ValueError, OSError, KeyError) as error:
+                            yield (thread_id, turn_id), None, error
+                        else:
+                            yield (thread_id, turn_id), item, None
+                        if not wanted:
+                            break
+                except (ValueError, OSError, KeyError) as error:
+                    reason = error
+                for turn_id in sorted(wanted):
+                    yield (thread_id, turn_id), None, reason
+                wanted.clear()
+    except (ValueError, OSError, KeyError) as error:
+        for (_, thread_id), wanted in remaining.items():
+            for turn_id in sorted(wanted):
+                yield (thread_id, turn_id), None, error
+
+
 def read_turn(project, thread_id, turn_id):
-    root = project_root(project)
-    with AppServer(root) as server:
-        checked_thread(server, root, thread_id)
-        for index, (turn, previous) in enumerate(with_previous(turn_rows(server, thread_id, 100))):
-            if index >= 2000:
-                raise ChatSourceError("Turn lookup exceeds the local history limit.")
-            if turn["id"] == turn_id:
-                return messages(server, root, thread_id, turn, previous)
+    for _, item, reason in lookup_receipts(project, [(thread_id, turn_id)]):
+        if reason is not None:
+            raise ChatSourceError(str(reason)) from reason
+        return item
     raise ChatSourceError("This turn is unavailable in the selected chat.")
 
 
@@ -248,13 +324,13 @@ def indexed_threads(server, root, since, size):
             yield row
 
 
-def recent_turns(project, *, thread_id=None, since=None, thread_limit=6, turn_limit=4, reviewed=()):
+def recent_turns(project, *, thread_id=None, since=None, thread_limit=6, turn_limit=4, reviewed=(), skip_turn=None):
     """Read bounded unreviewed turns. Completeness applies only to the local index."""
     if not 1 <= thread_limit <= 30 or not 1 <= turn_limit <= 50 or (since is not None and not number(since)):
         raise ValueError("Invalid history window.")
     root = project_root(project)
     reviewed = set(reviewed)
-    turns, warnings = [], []
+    turns, warnings, skipped = [], [], []
     active_count = 0
     with AppServer(root) as server:
         if thread_id:
@@ -266,7 +342,7 @@ def recent_turns(project, *, thread_id=None, since=None, thread_limit=6, turn_li
                 count = 0
                 rows = turn_rows(server, thread["id"], max(20, turn_limit + 2))
                 try:
-                    for turn, previous in with_previous(rows):
+                    for index, (turn, previous) in enumerate(with_previous(rows)):
                         stamp = turn.get("startedAt")
                         if since is not None and number(stamp) and stamp < since:
                             break
@@ -274,6 +350,12 @@ def recent_turns(project, *, thread_id=None, since=None, thread_limit=6, turn_li
                             continue
                         if since is not None and not number(stamp):
                             warnings.append("A turn has no reliable start time.")
+                        item = None
+                        if skip_turn is not None:
+                            item = messages(server, root, thread["id"], turn, previous)
+                            if skip_turn(item):
+                                skipped.append((thread["id"], turn["id"]))
+                                continue
                         if count == 0:
                             active_count += 1
                             if active_count > thread_limit:
@@ -283,16 +365,19 @@ def recent_turns(project, *, thread_id=None, since=None, thread_limit=6, turn_li
                             warnings.append("More project turns may be available.")
                             break
                         count += 1
-                        turns.append(messages(server, root, thread["id"], turn, previous))
+                        if item is None:
+                            item = messages(server, root, thread["id"], turn, previous)
+                        item["latest_in_thread"] = index == 0
+                        turns.append(item)
                 except (ChatSourceError, OSError, ValueError, KeyError) as error:
-                    warnings.append(f"Could not finish reading indexed chat {thread['id']}: {type(error).__name__}.")
+                    warnings.append(f"Could not finish reading indexed chat {thread['id']}: {error}")
                 if active_count > thread_limit:
                     break
         except (ChatSourceError, OSError, ValueError, KeyError) as error:
-            warnings.append(f"Could not finish listing indexed chats: {type(error).__name__}.")
+            warnings.append(f"Could not finish listing indexed chats: {error}")
     warnings = list(dict.fromkeys(warnings))
     turns.sort(key=lambda row: (row["started_at"] or 0, row["thread"], row["turn"]))
-    return {"turns": turns, "complete": not warnings, "warnings": warnings, "indexed_only": True}
+    return {"turns": turns, "complete": not warnings, "warnings": warnings, "indexed_only": True, "skipped": skipped}
 
 
 def main():

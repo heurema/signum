@@ -33,7 +33,9 @@ SCHEMA_VERSION = 1
 PROJECT_POINTER = (
     "This project uses Signum. Use the installed project-intent skill on project kickoff, "
     "consequential decisions and scoped changes. Orient from current files and prior owner "
-    "decisions before choosing work. Keep routine edits in ordinary chat.\n"
+    "decisions before choosing work. For next-step questions run the installed project-intent "
+    "skill's read-only scripts/signum.py --project ROOT next --query \"topic words\" and answer "
+    "from the result. Keep routine edits in ordinary chat.\n"
 )
 
 
@@ -580,7 +582,7 @@ class Journal:
             "scope": scope,
             "blocked": blocked,
             "missing_verification": missing_verification,
-            "authority_limit": "This draft grants no new authority. Preserve existing owner authorization within its stated scope. Work outside it, including an unapproved release, needs separate owner authorization.",
+            "authority_limit": "Use the confirmed scope. When the user's request changes an agreed method or boundary, first ask whether to replace the current choice with the proposed one. Wait for that answer before choosing implementation details or executing the change. New work and releases need their own authorization.",
         }
         if missing_verification:
             status["draft"]["verification_note"] = "Ask how to verify each listed item before judging its result."
@@ -715,6 +717,9 @@ def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", required=True, type=Path, help="existing project directory")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("next", help="read the next step under an existing permission").add_argument(
+        "--query", help="permission topic or distinctive words",
+    )
     commands.add_parser("init", help="enable Signum in this project")
     commands.add_parser("capture", help="record source-checked choices from a Codex turn")
     for name in ("status", "history", "contract"):
@@ -741,6 +746,9 @@ def run(args):
         raise SignumError("--project must be an existing directory.")
     directory = journal_directory(project)
     path = directory / "state.json"
+    if args.command == "next":
+        import next_step
+        return next_step.run(project, directory, sys.modules[__name__], args.query)
     if args.command == "init":
         read_initialization_state(directory)
         with locked_store(directory, create=True):

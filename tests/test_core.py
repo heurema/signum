@@ -218,7 +218,7 @@ class CoreTest(unittest.TestCase):
             [("Q", "Describe the handoff to another chat")],
         )
         self.assertEqual(contract["draft"]["scope"][0]["authority_limit"], "Text only")
-        self.assertIn("separate owner authorization", contract["draft"]["authority_limit"])
+        self.assertIn("New work and releases need their own authorization", contract["draft"]["authority_limit"])
         self.assertEqual({item["topic"] for item in contract["draft"]["blocked"]}, {"P", "links"})
         self.assertIn(
             ["Which local storage should we use?"],
