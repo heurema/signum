@@ -9,7 +9,39 @@ from delivery import Deliveries
 from signum import Journal, SignumError, journal_directory
 
 
-def orientation(project):
+def source_files(project, folder, pattern):
+    directory = project / folder
+    if directory.is_symlink() or not directory.is_dir():
+        return []
+    names = sorted(p.relative_to(project).as_posix() for p in directory.glob(pattern)
+                   if not p.is_symlink() and p.is_file())
+    return names[:20]
+
+
+def source_index(project, journal, deliveries):
+    checks = []
+    for version, entry in reversed(deliveries.versions.items()):
+        if deliveries.latest_version[entry["permission"]] != version:
+            continue
+        proof = entry["evidence"]
+        checks.append({
+            "topic": journal.record(entry["permission"])["topic"] if entry["permission"] in journal.proposed else None,
+            "permission": entry["permission"], "version": version,
+            "report": proof["artifact"]["path"], "check_status": proof["status"],
+            "checked_at": proof.get("checked_at"), "registered_at": entry["at"],
+            "owner_review": deliveries.decisions.get(version, {}).get("event", "awaiting_review"),
+        })
+        if len(checks) == 12:
+            break
+    return {
+        "instructions": "AGENTS.md" if (project / "AGENTS.md").is_file() else None,
+        "documents": source_files(project, "docs", "*.md"),
+        "reports": source_files(project, ".checks", "*.json"),
+        "registered_checks": checks,
+    }
+
+
+def orientation(project, *, sources=False):
     project = project.resolve(strict=True)
     directory = journal_directory(project)
     journal = Journal.read(directory / "state.json", required=True)
@@ -34,7 +66,7 @@ def orientation(project):
             stage = "not_started"
         if stage != "accepted":
             work.append({"topic": entry["topic"], "stage": stage, "basis_state": entry["state"]})
-    return {
+    inventory = {
         "project": str(project),
         "project_entries": entries[:20],
         "other_entry_count": max(0, len(entries) - 20),
@@ -46,14 +78,18 @@ def orientation(project):
         "pending_topics": [r["topic"] for r in status["proposals"]],
         "withdrawn_count": len(journal.withdrawn),
     }
+    if sources:
+        inventory["source_index"] = source_index(project, journal, deliveries)
+    return inventory
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", required=True, type=Path)
+    parser.add_argument("--sources", action="store_true", help="include pointers to project evidence")
     args = parser.parse_args()
     try:
-        print(json.dumps(orientation(args.project), ensure_ascii=False))
+        print(json.dumps(orientation(args.project, sources=args.sources), ensure_ascii=False))
     except (OSError, ValueError, SignumError) as error:
         sys.exit(f"signum: {error}")
 

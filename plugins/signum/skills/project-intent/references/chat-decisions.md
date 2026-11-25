@@ -22,6 +22,8 @@ For a read-only question about the next step, use `signum.py --project ROOT next
 
 For “SQLx подходит, откат пока оставим открытым”, submit two choices with distinct topics. The first is chosen, with “SQLx подходит” as its summary and quote. The second is open, with the owner's deferral clause as its quote. Use the same structure for other project decisions. Never discard a qualifier or conditional phrase to manufacture a positive answer.
 
+An open choice can return the owner's exact `wording`. If the next step needs that decision, read the full source and check that the wording includes its qualifications. Show one complete rule with its conditions, followed by “Фиксируем?” Leave quotations, examples and deferred alternatives open. For the next native standalone assent use `capture` on that reply as a chosen decision with the displayed wording as its summary. The final offer must visibly identify exactly that rule. Changed terms stay open.
+
 Example payload shape:
 
 ```json
@@ -46,3 +48,7 @@ If the owner explicitly sets aside a particular unavailable receipt, use `captur
 ## After updating the plugin
 
 Codex can load a new installation and its trust setting on disk while an open chat still uses its earlier handlers. Verify a fresh receipt against the exact chat, turn and prompt. If the current Desktop process has not loaded the change, restart Desktop between tasks and reopen the same saved chat. A new ordinary message can then test the updated handler. An earlier unobserved message remains unverified. Temporary Codex sessions without persistent history do not create receipts.
+
+### Reviewing a pending turn for one permission
+
+If a pending message contains work for another topic, read its complete owner and assistant text alongside the confirmed permission using `pending_scope.py --project ROOT --permission ID --turn THREAD/TURN`. Compare the message with the outcome, boundaries and every declared dependency. When its subject is demonstrably unrelated, repeat the command with `--unrelated DISPLAYED_FINGERPRINT --reason "Concrete reason"`, then retry the start. This review leaves the turn pending for the project. It applies only to the specified permission version and the verified text. A changed source, uncertain meaning or possible change to the work needs ordinary decision review. A known dependency source cannot be set aside this way.

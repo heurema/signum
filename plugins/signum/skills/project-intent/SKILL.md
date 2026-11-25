@@ -19,6 +19,8 @@ Use native receipts for attribution. Routine independent edits stay in ordinary 
 
 ## Starting a project or deciding where to begin
 
+For an open kickoff, cross-component advice or a question about a running system, use the [project evidence workflow](references/project-evidence.md) and the read-only `orient.py --sources` index.
+
 When asked to start slowly, initiate a project or work out what to do next, run `python3 -B <this-skill>/scripts/orient.py --project ROOT` and read the project's instructions. This read-only inventory shows the actual files, toolchain markers and recorded work. Open the relevant project plan, brief, latest mockup or earlier owner discussion. If there is no local link, use available project chat search by project name and subject. Check the owner's actual words before relying on a summary. An empty folder can belong to a project with substantial design work elsewhere.
 
 On a repeated kickoff, start from today's files, current decisions and the owner's corrections in the earlier project chat. A request to revisit the starting point in an opted-in project calls for a fresh look. Carry forward useful materials. Examples, mockups, assistant suggestions and withdrawn proposals supply context and do not authorize a new rule, contract, scaffold or implementation.
@@ -33,7 +35,7 @@ For an adopted Rust direction, distinguish an empty Cargo workspace from selecti
 
 ## From a request to working code
 
-During a pilot with a designated Signum feedback backlog, capture observed plugin bugs, friction or ideas there. Attach a project alias, workflow step, impact and a local turn or contract reference. Group repeats. If the backlog is outside the writable workspace, buffer the observation in `.signum/feedback-pending.md` and report it as pending until transferred. Continue the host project's task. Pause a dependent action if scope or acceptance cannot be trusted. Logging grants no authority to repair the plugin.
+During a pilot with a designated Signum feedback backlog, use the [pilot feedback route](references/feedback.md) for an observed plugin bug, friction or idea. Flush pending observations at a handoff or blocker and report the returned SGF ID or pending status. Continue independent work. Logging grants no authority to repair the plugin.
 
 Use this path for a substantive change or when the owner asks to work under a contract. A routine edit can stay in ordinary chat. Read the relevant existing behavior. If two readings imply different outcomes, give the smallest example that separates them. When the outcome is already agreed, keep it fixed across options and ask only about the remaining implementation choice before editing. Research a material unknown only until it changes that choice.
 
