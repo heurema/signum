@@ -199,7 +199,7 @@ def capture(core, project, directory, payload, read_turn):
     if (source.get("thread"), source.get("turn")) != key:
         raise core.SignumError("The source reader returned a different turn.")
     user_id, assistant_id = source.get("user_id") or "", source.get("assistant_id") or ""
-    if not user_id and not assistant_id:
+    if not user_id and not assistant_id and not source.get("complete_user_text"):
         raise core.SignumError("No source messages are available for this turn.")
     user_hash = digest([user_id, source["user"]])
     fingerprint = digest([user_hash, assistant_id, source["assistant"]])
@@ -212,8 +212,21 @@ def capture(core, project, directory, payload, read_turn):
     with core.locked_store(directory):
         journal = core.Journal.read(path, required=True)
         old = journal.reviewed.get(key)
-        if old and (old["user_hash"] != user_hash or (old["assistant_id"] and old["fingerprint"] != fingerprint)):
-            raise core.SignumError("Published source content changed; review the source again.")
+        if old:
+            # Desktop can append another user message before the turn ends.
+            # An empty, unfinished review still has a verifiable original message.
+            extended = (not old["completed"] and not old["assistant_id"] and old["user_id"] and not old["choices"]
+                        and source.get("complete_user_text")
+                        and next(iter(source.get("user_message_hashes", ())), None) == old["user_hash"])
+            if ((old["user_hash"] != user_hash and not extended)
+                    or (old["assistant_id"] and old["fingerprint"] != fingerprint)):
+                raise core.SignumError("Published source content changed; review the source again.")
+            if not old["owner_seen"] and source["allow_owner"]:
+                submitted = {item["topic"] for item in payload["choices"]}
+                missing = {topic for topic, part in old["choices"].items() if part["state"] == "open"} - submitted
+                if missing:
+                    raise core.SignumError("The owner receipt arrived after review. Recheck the original choices: "
+                                           + ", ".join(sorted(missing)) + ".")
         parts = dict(old["choices"]) if old else {}
         for item in payload["choices"]:
             topic = item["topic"]

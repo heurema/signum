@@ -1,20 +1,21 @@
 ---
 name: project-intent
-description: In opted-in Signum projects, ground design advice in the current scope and earlier project choices, capture decisions, resume work or deliver a scoped change. For “продолжи разбор поставки” use scripts/resume_delivery.py --project ROOT --rehearse. For brief recall use scripts/recall.py. Skip routine independent edits.
+description: In opted-in Signum projects, answer what can happen next with scripts/signum.py --project ROOT next --query "topic words". Recover decisions, capture changes and deliver scoped work. For “продолжи разбор поставки” use scripts/resume_delivery.py --project ROOT --rehearse. Skip routine independent edits.
 ---
 
 # Project intent
 
 Use the user's project root. Resolve scripts beside this installed file. Reply in the user's language.
 
+For “what can we do next on this task?”, call `python3 -B scripts/signum.py --project ROOT next --query "distinctive topic words"` once. Pass the subject in the user's words. Omit the query when no subject was given. Use the returned contract, next action or reason to pause directly. If several contracts fit, ask which one. A request to change the agreed method still needs the owner's decision. This lookup does not start work or change the journal.
+
 Apply the project workflow when the root has its own `.signum/state.json` or its project instructions identify Signum. The core requires the local journal for writes. In other projects continue in ordinary chat. Only an explicit request to connect a project starts [project setup](../setup/SKILL.md). A parent project, another open chat or an installed language profile grants no opt-in.
 
 ## Project advice and decisions in ordinary chat
 
 Before recommending or drafting a project approach, follow the scope check in [chat decisions](references/chat-decisions.md). A request for a “command” can define the operation while leaving its interface open. Look for a choice covering this operation. If several project entry points fit, ask which should perform it before proposing files or recording a contract. Use the same reference to capture a choice or resume a discussion.
-Use the native turn receipt when available. Split independent choices, retain open
-questions, and check recent project turns before answering from memory or starting dependent work.
-Simple unrelated edits need no journal call.
+Continue an authorized step using the current project decision. When a request conflicts with it, the first question is whether to replace the agreed choice. Stop there until answered. Discuss implementation details once the change is confirmed. Exploring an alternative leaves the choice open.
+Use native receipts for attribution. Routine independent edits stay in ordinary chat.
 
 ## Starting a project or deciding where to begin
 

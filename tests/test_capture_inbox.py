@@ -82,8 +82,9 @@ class CaptureInboxTest(unittest.TestCase):
             self.assertEqual(set(recovered.confirmed), {"migration-tool"})
             self.assertEqual(recovered.status("rollback")["proposals"][0]["state"], "pending")
             self.assertEqual(inbox.inspect(self.root, recovered)["pending"], [])
-            with patch.object(chat_source, "recent_turns", return_value=dict(history, complete=False)):
-                with self.assertRaisesRegex(ValueError, "incomplete.*original project"):
+            truncated = dict(history, complete=False, warnings=["More project chats may be available."])
+            with patch.object(chat_source, "recent_turns", return_value=truncated):
+                with self.assertRaisesRegex(ValueError, "incomplete.*More project chats.*original project"):
                     inbox.check_start(self.root, recovered, {"depends_on": [{"topic": "test", "id": "1" * 24}]})
 
     def test_stale_declared_dependency_with_separate_owner_permission(self):
