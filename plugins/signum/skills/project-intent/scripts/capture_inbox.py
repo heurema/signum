@@ -13,6 +13,7 @@ import time
 import chat_source
 import decision_capture
 import history_origin
+import pending_scope
 import scope_guard
 
 ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
@@ -126,19 +127,22 @@ def receive(event):
             if db.execute("SELECT digest FROM prompts WHERE thread=? AND turn=?", (thread, turn)).fetchone() != (digest(prompt),):
                 raise ValueError("A different prompt already occupies this source turn.")
     return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": (
-        f"Signum {thread}/{turn}. Before choosing an interface, check the scope and prior choices. "
-        "When the outcome is known but its supported entry points are still open, ask which should run that same operation before drafting. "
-        f"For scope, decisions or continuation see {Path(__file__).resolve().parents[1] / 'references/chat-decisions.md'}. "
-        "Routine chat proceeds normally."
+        f"Signum {thread}/{turn}. Routine edits proceed directly. To resume agreed work use python3 -B "
+        f"{Path(__file__).resolve().with_name('signum.py')} --project . next --query TOPIC. "
+        "Check scope before advice. If only the method is open, ask about that method."
     )}}
 
 
-def inspect(project, journal, *, thread_limit=10, turn_limit=12, include_text=False, advance=True, request_thread=None):
+def inspect(project, journal, *, thread_limit=10, turn_limit=12, include_text=False, advance=True, request_thread=None,
+            permission=None):
     """Inspect the current history window and exact receipts still awaiting review."""
     with database(project) as db:
         since = db.execute("SELECT since FROM tracking WHERE id=1").fetchone()[0]
         native = {tuple(row) for row in db.execute("SELECT thread,turn FROM prompts")}
         receipts = native.union(db.execute("SELECT thread,turn FROM archived_prompts")) if has_archive(db) else native
+        version = journal.confirmed.get(permission.get("topic")) if permission else None
+        exclusions = pending_scope.exclusions(db, version) if version else {}
+    sources = pending_scope.dependency_sources(journal, permission, receipts) if permission else {}
     origin = history_origin.load(project)
     inherited = {tuple(key.split("/")) for key in origin["receipts"]} if origin else set()
     before = int(time.time())
@@ -156,6 +160,8 @@ def inspect(project, journal, *, thread_limit=10, turn_limit=12, include_text=Fa
         if item.get("status") != "interrupted" or not item.get("complete_user_text", item.get("plain_user_text")):
             return False
         key = item["thread"], item["turn"]
+        if key in sources:
+            return False
         if key in receipts and not item.get("receipt_matches", item["allow_owner"]):
             return False
         review = journal.reviewed.get(key)
@@ -178,6 +184,7 @@ def inspect(project, journal, *, thread_limit=10, turn_limit=12, include_text=Fa
         blockers.append(f"Source turn {'/'.join(key)}: the inherited receipt is missing from this copy.")
     seen = set(result.get("skipped", ()))
     pending = []
+    deferred = []
     origin_recovered = []
 
     def check(item):
@@ -185,6 +192,11 @@ def inspect(project, journal, *, thread_limit=10, turn_limit=12, include_text=Fa
         seen.add(key)
         review = journal.reviewed.get(key)
         label = f"Source turn {key[0]}/{key[1]}"
+        if key in sources:
+            label += " for decision " + ", ".join(sorted(sources[key]))
+            if not item["allow_owner"] or (review and not already_reviewed(item, review)):
+                blockers.append(f"{label}: the submitted source or its recorded review could not be verified.")
+                return
         interrupted = item.get("status") == "interrupted"
         if key in receipts and (not item.get("receipt_matches", item["allow_owner"])
                                 or not item.get("complete_user_text", True)):
@@ -199,6 +211,9 @@ def inspect(project, journal, *, thread_limit=10, turn_limit=12, include_text=Fa
                 blockers.append(f"{label}: no readable message is available yet.")
             return
         if already_reviewed(item, review) or resolved_interruption(item):
+            return
+        if key not in sources and key in exclusions and pending_scope.fingerprint(item) == exclusions[key]:
+            deferred.append(key)
             return
         entry = {"thread": key[0], "turn": key[1]}
         if (request_thread == key[0] and key not in inherited and not item.get("history_origin")
@@ -217,11 +232,13 @@ def inspect(project, journal, *, thread_limit=10, turn_limit=12, include_text=Fa
     for item in result["turns"]:
         check(item)
     # A receipt can arrive before its chat is indexed or before its start timestamp window.
-    missing = sorted(native - seen - reviewed)
+    missing = sorted((((native | exclusions.keys()) - reviewed) | sources.keys()) - seen)
     for key, item, error in chat_source.lookup_receipts(project, missing, verify_origin=sorted(inherited & native)):
         if error is not None:
-            problems = gaps if isinstance(error, chat_source.MissingTurn) else blockers
-            problems.append(f"Source turn {key[0]}/{key[1]} is unavailable: {error}")
+            gap = isinstance(error, chat_source.MissingTurn) and key not in sources and key not in exclusions
+            problems = gaps if gap else blockers
+            dependency = " for decision " + ", ".join(sorted(sources[key])) if key in sources else ""
+            problems.append(f"Source turn {key[0]}/{key[1]}{dependency} is unavailable: {error}")
         else:
             if item.get("history_origin"):
                 origin_recovered.append({"thread": key[0], "turn": key[1], "source": item["history_origin"],
@@ -229,7 +246,7 @@ def inspect(project, journal, *, thread_limit=10, turn_limit=12, include_text=Fa
             check(item)
     warnings = list(dict.fromkeys([*blockers, *gaps]))
     complete = bool(result["complete"]) and not warnings
-    if advance and complete and not pending and all(item["completed"] or item.get("status") == "interrupted"
+    if advance and complete and not pending and not deferred and all(item["completed"] or item.get("status") == "interrupted"
                                         for item in result["turns"]):
         with database(project, write=True) as db:
             db.execute("UPDATE tracking SET since=max(since,?) WHERE id=1", (before - 1,))
@@ -242,6 +259,11 @@ def inspect(project, journal, *, thread_limit=10, turn_limit=12, include_text=Fa
 
 def pending_decisions(project, journal, permission, *, advance, request_thread=None):
     if not active(project):
+        sources = pending_scope.dependency_sources(journal, permission, ())
+        if sources:
+            key, topics = next(iter(sources.items()))
+            raise ValueError(f"Start of {permission['topic']} is waiting. Source turn {'/'.join(key)} for decision "
+                             f"{', '.join(sorted(topics))} cannot be verified: the receipt store is missing.")
         if (permission.get("depends_on") or permission.get("basis")) and history_origin.load(project):
             raise ValueError(f"Start of {permission['topic']} is waiting: this copy's receipt store is missing.")
         return
@@ -249,7 +271,7 @@ def pending_decisions(project, journal, permission, *, advance, request_thread=N
         raise ValueError("This earlier permission has no decision declaration. Revise it with depends_on before a new start.")
     if not permission.get("basis") and not permission.get("depends_on"):
         return
-    state = inspect(project, journal, advance=advance, request_thread=request_thread)
+    state = inspect(project, journal, advance=advance, request_thread=request_thread, permission=permission)
     step = permission.get("topic", "decision-dependent work")
     problems = state["warnings"] if scope_guard.parse(permission.get("scope")) is None else state["start_blockers"]
     if problems:
@@ -260,7 +282,8 @@ def pending_decisions(project, journal, permission, *, advance, request_thread=N
     if state["pending_count"] > int(current is not None):
         first = next(item for item in state["pending"] if item != current)
         raise ValueError(f"Start of {step} is waiting. Review the pending message {first['thread']}/{first['turn']} "
-                         "for decisions used by this step (capture_inbox.py --project ROOT).")
+                         "for decisions used by this step (capture_inbox.py --project ROOT). "
+                         "Use pending_scope.py for a turn verified as unrelated to this permission.")
 
     return {"current_request": current, "history_gap_count": len(state["warnings"])}
 

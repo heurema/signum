@@ -115,24 +115,42 @@ def displayed_rule(text):
     return " ".join(text.split())
 
 
+def whole_statement(text, quote):
+    if not quote or text.count(quote) != 1:
+        return False
+    before, _, after = text.partition(quote)
+    starts = not before.strip() or before.rstrip().endswith((".", "!", "?")) or before.endswith("\n")
+    ends = not after.strip() or quote.endswith((".", "!", "?")) or after.startswith("\n")
+    return starts and ends and not re.match(
+        r"\s*(?:но|только|при условии|если|кроме|однако|but|only|unless|except|provided|if)\b", after, re.I)
+
+
 def previous_offer(core, journal, source, previous, item):
     if previous is None or previous["thread"] != source["thread"] or previous["turn"] != source.get("previous_turn"):
         return None
     review = journal.reviewed.get((previous["thread"], previous["turn"]))
-    if not review or not previous["completed"] or len(review["choices"]) != 1:
+    if not review or not previous["completed"] or not previous["assistant_id"]:
         return None
     part = review["choices"].get(item["topic"])
     if not part or part["state"] != "open" or part["id"] in journal.accepted or part["id"] in journal.withdrawn:
         return None
     record = journal.record(part["id"])
-    fingerprint = digest([digest([previous["user_id"] or "", previous["user"]]),
-                          previous["assistant_id"] or "", previous["assistant"]])
-    if (review["fingerprint"] != fingerprint or not previous["assistant_id"]
+    user_hash = digest([previous["user_id"] or "", previous["user"]])
+    fingerprint = digest([user_hash, previous["assistant_id"], previous["assistant"]])
+    if (review["user_hash"] != user_hash
+            or (review["assistant_id"] and review["fingerprint"] != fingerprint)
             or record["summary"] != item["summary"] or record["replaces"] != item["expected"]):
         return None
     # A generic yes can only address one visibly self-contained rule. Extra
     # prose may contain another question or a qualification.
     if displayed_rule(previous["assistant"]) != core.assent_text(record["summary"]):
+        return None
+    origin, _, original_quote = record["source"].partition("\n")
+    if (origin.endswith(f" message:{previous['user_id']}") and original_quote in previous["user"]
+            and not whole_statement(previous["user"], original_quote)):
+        return None
+    if sum(core.assent_text(journal.record(p["id"])["summary"]) == core.assent_text(record["summary"])
+           for p in review["choices"].values()) != 1:
         return None
     pending = [p for p in journal.status(item["topic"])["proposals"] if p["state"] != "conflict"]
     return part["id"] if len(pending) == 1 else None
@@ -245,5 +263,17 @@ def capture(core, project, directory, payload, read_turn):
         if receipt != old:
             journal.reviewed[key] = receipt
             core.write_journal(path, journal)
-    return {"result": "reviewed", "thread": key[0], "turn": key[1],
-            "choices": {topic: {"id": part["id"], "state": part["state"]} for topic, part in parts.items()}}
+    result = {"result": "reviewed", "thread": key[0], "turn": key[1],
+              "choices": {topic: {"id": part["id"], "state": part["state"]} for topic, part in parts.items()}}
+    if source["allow_owner"]:
+        for topic, part in parts.items():
+            if part["state"] != "open":
+                continue
+            record = journal.record(part["id"])
+            ref, _, quote = record["source"].partition("\n")
+            if (ref == f"codex:thread:{key[0]} turn:{key[1]} message:{user_id}"
+                    and quote == record["summary"] and whole_statement(source["user"], quote)
+                    and record["replaces"] == journal.confirmed.get(topic)
+                    and part["id"] not in journal.accepted and part["id"] not in journal.withdrawn):
+                result["choices"][topic]["wording"] = quote
+    return result

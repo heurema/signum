@@ -20,7 +20,8 @@ def select(project, journal, deliveries, query):
     cards = [item for item in status["confirmed"] if item["kind"] == "permission"]
     pending = [item for item in status["proposals"] if item["kind"] == "permission" and item["state"] != "conflict"]
     candidates = cards + [item for item in pending if item["topic"] not in journal.confirmed]
-    terms = recall.search_terms(query) if query else []
+    navigation = {"продолжи", "продолжим", "продолжить", "continue", "resume", "next", "шаг", "дальше"}
+    terms = [t for t in recall.search_terms(query) if t not in navigation] if query else []
     if query:
         exact = [item for item in candidates if item["topic"] == query.strip() or item["id"] == query.strip()]
         if exact:
@@ -29,13 +30,15 @@ def select(project, journal, deliveries, query):
             scored = []
             for item in candidates:
                 main = set(recall.words(item["topic"]) + recall.words(item["summary"]))
-                score = (len(recall.record_matches(item, terms)),
-                         sum(any(recall.matches_word(term, word) for word in main) for term in terms))
-                if score[0]:
+                primary = sum(any(recall.matches_word(term, word) for word in main) for term in terms)
+                coverage = len(recall.record_matches(item, terms))
+                score = (primary, coverage)
+                # An incidental mention in limits or evidence cannot identify the work.
+                if primary and coverage * 2 >= len(terms):
                     scored.append((score, item))
             strongest = max((score for score, _ in scored), default=(0, 0))
             candidates = [item for score, item in scored if score == strongest]
-            if candidates and strongest[0] < min(2, len(terms)):
+            if candidates and strongest[1] < min(2, len(terms)):
                 return choices(candidates)
     elif candidates:
         unfinished = [item for item in candidates if not closed(deliveries, item["id"])]
