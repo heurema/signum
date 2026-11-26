@@ -96,7 +96,8 @@ def permission_issues(journal, permission_id):
         return ["The permission has no agreed verification criteria."]
     if scope_guard.parse(permission.get("scope")) is not None and permission.get("questions"):
         return ["Resolve the open questions in the permission before working under exact file scope."]
-    return []
+    handoff_issue = journal.handoff_issue(permission)
+    return [handoff_issue] if handoff_issue else []
 
 
 def require_permission(journal, permission_id):

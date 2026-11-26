@@ -153,7 +153,7 @@ def describe(project, journal, deliveries, card):
 def store_revision(directory):
     # Journal updates use atomic replacement. Receipts can change in place.
     revision = []
-    for name in ("state.json", "delivery.json", capture_inbox.DB, capture_inbox.DB + "-wal"):
+    for name in ("state.json", "delivery.json", capture_inbox.DB, capture_inbox.DB + "-wal", "handoffs.json"):
         try:
             info = (directory / name).lstat()
         except FileNotFoundError:
