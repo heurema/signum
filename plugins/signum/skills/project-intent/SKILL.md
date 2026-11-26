@@ -1,6 +1,6 @@
 ---
 name: project-intent
-description: In opted-in Signum projects, answer what can happen next with scripts/signum.py --project ROOT next --query "topic words". Recover decisions, capture changes and deliver scoped work. For “продолжи разбор поставки” use scripts/resume_delivery.py --project ROOT --rehearse. Skip routine independent edits.
+description: In opted-in Signum projects, answer what can happen next with scripts/signum.py --project ROOT next --query "topic words". Recover decisions, capture changes and deliver scoped work. For “продолжи разбор поставки” use scripts/resume_delivery.py --project ROOT --rehearse. For “continue the handoff” or “продолжи передачу” use the handoff command. Skip routine independent edits.
 ---
 
 # Project intent
@@ -68,5 +68,7 @@ For a known topic and complete wording, read this skill and run `core prepare --
 For a native chat decision use the source-checked capture workflow first. In the manual journal workflow, for whole, unqualified assent to a displayed plain decision, run `core assent` once. Send JSON with `reply` (verbatim), `shown` (complete wording), and the proposal `id`. If the wording was shown before staging, send `record` instead of `id`, including the known predecessor. A returned `confirmed` or `already_current` completes the turn. Changed terms stay open. For a rich record, permission, competing version or a clear affirmative outside the short vocabulary follow [Recording a choice](references/decisions.md). Preserve the original authority limits and the project's agreed research method.
 
 ## Resuming or delivering work
+
+When a participant hands an interdependent task to another executor or asks to resume a handoff, use [linked tasks](references/handoff.md). A fresh executor reads `scripts/signum.py --project ROOT handoff` once. For routine edits and ordinary next-step questions keep the usual workflow.
 
 For a contract use `python3 -B <skill-directory>/scripts/signum.py --project <root> contract [--topic <key>]`. Include intended result, scope that can proceed now, open decisions, acceptance observation and authority limits. Distinguish proposed checks from observed evidence. Use `history --topic <key>` for earlier wording. For a change from agreed contract through verification and owner acceptance follow [Delivering an agreed change](references/delivery.md).

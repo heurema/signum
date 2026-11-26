@@ -26,7 +26,11 @@ codex plugin marketplace add .
 codex plugin add signum@heurema
 ```
 
-Open a fresh Codex chat in the directory you want to use. Say **“Set up Signum for this project.”** This creates the local journal and adds a short project instruction when one does not already exist. Repeating setup preserves existing records. Each project opts in separately.
+1. After installing from the Desktop catalog, select **Set up Signum**. If you installed from the terminal or closed the prompt, open the project folder in Codex and say **“Set up Signum for this project.”** Choose the folder to connect. Signum keeps its decisions there.
+2. Open **Settings → Hooks → From plugins → Signum**. If you see **Trust**, review and trust the Signum entry, then check that it is enabled.
+3. If you just trusted or enabled Signum, open a **new chat in the same project**. Send **“Check my Signum connection.”** A confirmation that Signum received this message means setup is complete.
+
+After an update, Desktop may ask you to trust the changed hook. Check the same setting, then send the connection check in a fresh chat in the same folder. Your decisions are already there. Restart Desktop if it still shows the previous local plugin version.
 
 The core runs on POSIX with Python 3.9 or newer and uses the standard library. From the Signum checkout, inspect another project directly:
 

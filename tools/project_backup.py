@@ -21,7 +21,7 @@ FORMAT = "signum-project-backup"
 VERSION = 1
 FILES = {
     "README.md", ".gitignore", ".agents/plugins/marketplace.json",
-    ".signum/state.json", ".signum/delivery.json",
+    ".signum/state.json", ".signum/delivery.json", ".signum/handoffs.json",
 }
 TREES = {"docs", "plugins", "tests", "tools", ".signum/review"}
 IGNORED = {".git", ".hg", ".svn", "__pycache__", ".cache", ".pytest_cache",

@@ -201,6 +201,7 @@ def timestamp():
 
 class Journal:
     def __init__(self):
+        self.directory = None
         self.enabled = False
         self.events = []
         self.proposed = {}
@@ -213,6 +214,7 @@ class Journal:
     @classmethod
     def read(cls, path, *, required=False):
         journal = cls()
+        journal.directory = path.parent
         try:
             with open(path, encoding="utf-8", opener=no_follow) as stream:
                 document = json.load(
@@ -234,6 +236,12 @@ class Journal:
         decision_capture.load_reviews(sys.modules[__name__], journal, document.get("capture_reviews", []))
         journal.enabled = True
         return journal
+
+    def handoff_issue(self, permission):
+        if self.directory is None:
+            return None
+        import handoff
+        return handoff.permission_issue(self, permission, self.directory, sys.modules[__name__])
 
     def append(self, event):
         if (
@@ -645,15 +653,19 @@ def locked_store(directory, *, create=False):
 
 
 def write_journal(path, journal):
+    document = {"schema_version": SCHEMA_VERSION, "events": journal.events}
+    if getattr(journal, "reviewed", None):
+        document["capture_reviews"] = list(journal.reviewed.values())
+    write_document(path, document)
+
+
+def write_document(path, document):
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", newline="\n", dir=path.parent, prefix=".journal-", delete=False,
         ) as stream:
             temporary_path = Path(stream.name)
-            document = {"schema_version": SCHEMA_VERSION, "events": journal.events}
-            if getattr(journal, "reviewed", None):
-                document["capture_reviews"] = list(journal.reviewed.values())
             write_json(stream, document)
             stream.flush()
             os.fsync(stream.fileno())
@@ -720,6 +732,14 @@ def arguments():
     commands.add_parser("next", help="read the next step under an existing permission").add_argument(
         "--query", help="permission topic or distinctive words",
     )
+    commands.add_parser("handoff", help="read a linked task for the next participant").add_argument("topic", nargs="?")
+    link = commands.add_parser("link-task", help="link a task to its predecessor, recipient and decision")
+    link.add_argument("topic", help="exact topic of the target permission")
+    link.add_argument("--after", required=True, help="previous task or its reference")
+    link.add_argument("--assignee", required=True, help="intended implementation recipient")
+    link.add_argument("--decision", required=True, help="topic of the recorded decision or its proposals")
+    link.add_argument("--question", required=True, help="the choice the owner needs to make")
+    link.add_argument("--expected", help="current link ID when replacing its details")
     commands.add_parser("init", help="enable Signum in this project")
     commands.add_parser("capture", help="record source-checked choices from a Codex turn")
     for name in ("status", "history", "contract"):
@@ -749,6 +769,9 @@ def run(args):
     if args.command == "next":
         import next_step
         return next_step.run(project, directory, sys.modules[__name__], args.query)
+    if args.command in ("handoff", "link-task"):
+        import handoff
+        return handoff.run(args, project, directory, sys.modules[__name__])
     if args.command == "init":
         read_initialization_state(directory)
         with locked_store(directory, create=True):

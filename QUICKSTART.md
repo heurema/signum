@@ -6,4 +6,6 @@ When you return to agreed work, ask “What can I do next on the importer?” Si
 
 During a pilot, an agent can record a problem in a connected project and return its number from the designated Signum backlog. If the backlog is unavailable, the project keeps the observation for later delivery. [Pilot feedback](plugins/signum/skills/project-intent/references/feedback.md)
 
+When a colleague or a new agent takes over after a decision, ask Codex to hand the task to that person or agent. In the same project the recipient can say **“Continue the handoff.”** They get the outstanding question or the current contract, file scope and check. Once the check passes, the owner can review the specific result. [Handing work to another executor](plugins/signum/skills/project-intent/references/handoff.md)
+
 For existing Claude commands or the earlier proof gate, use the [first-generation quickstart](archive/v1/QUICKSTART.md) with its matching revision.
